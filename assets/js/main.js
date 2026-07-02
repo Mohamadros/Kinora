@@ -796,9 +796,26 @@ const assistantFallback=[
   {title:'Rudy',year:'1993',runtime:114,rating:7.5,genreIds:[18],platforms:['Prime Video'],moods:['inspired','energized','moved'],age:'old',overview:'An undersized dreamer refuses to let rejection define his place on the field.',genre:'Sports · Drama'},
   {title:'October Sky',year:'1999',runtime:108,rating:7.8,genreIds:[18,10751],platforms:['Disney+','Prime Video'],moods:['inspired','happy','moved'],age:'old',overview:'A coal-town student follows science, rockets, and hope toward a future he can choose.',genre:'Family · Drama'},
   {title:'The Truman Show',year:'1998',runtime:103,rating:8.2,genreIds:[35,18],platforms:['Netflix','Prime Video'],moods:['curious','inspired','thoughtful'],age:'old',overview:'A man questions the reality built around him and chooses freedom over comfortable illusion.',genre:'Comedy · Drama'},
-  {title:'Mission: Impossible - Fallout',year:'2018',runtime:147,rating:7.4,genreIds:[28,12,53],platforms:['Prime Video','Netflix'],moods:['energized','excited','inspired'],age:'new',overview:'A high-risk mission turns precision, loyalty, and momentum into pure cinematic energy.',genre:'Action · Thriller'},
-  {title:'The Fabelmans',year:'2022',runtime:151,rating:7.6,genreIds:[18],platforms:['Prime Video'],moods:['inspired','nostalgic','moved'],age:'new',overview:'A young filmmaker discovers how cinema transforms family memory, pain, and imagination.',genre:'Drama'}
+  {title:'Mission: Impossible - Fallout',year:'2018',runtime:147,rating:7.4,genreIds:[28,12,53],platforms:['Prime Video','Netflix'],moods:['energized','excited','inspired'],age:'modern',overview:'A high-risk mission turns precision, loyalty, and momentum into pure cinematic energy.',genre:'Action · Thriller'},
+  {title:'The Fabelmans',year:'2022',runtime:151,rating:7.6,genreIds:[18],platforms:['Prime Video'],moods:['inspired','nostalgic','moved'],age:'new',overview:'A young filmmaker discovers how cinema transforms family memory, pain, and imagination.',genre:'Drama'},
+  {title:'Spirited Away',year:'2001',runtime:125,rating:8.5,genreIds:[16,10751,14],platforms:['Netflix','Max','My own watchlist'],moods:['amazed','thoughtful','relaxed','curious'],age:'old',overview:'A young girl enters a spirit world where courage, kindness, and wonder help her find her way home.',genre:'Animation · Fantasy'},
+  {title:'Toy Story',year:'1995',runtime:81,rating:8.3,genreIds:[16,35,10751],platforms:['Disney+','My own watchlist'],moods:['happy','entertained','relaxed','inspired'],age:'old',overview:'A group of toys turn jealousy and fear into friendship, adventure, and playful imagination.',genre:'Animation · Comedy'},
+  {title:'The Iron Giant',year:'1999',runtime:86,rating:8.1,genreIds:[16,878,10751],platforms:['Prime Video','My own watchlist'],moods:['hopeful','emotional','inspired','thoughtful'],age:'old',overview:'A lonely boy befriends a giant robot and discovers a hopeful answer to fear and violence.',genre:'Animation · Sci-fi'},
+  {title:'Princess Mononoke',year:'1997',runtime:134,rating:8.3,genreIds:[16,12,14],platforms:['Netflix','My own watchlist'],moods:['amazed','thoughtful','emotional'],age:'old',overview:'A prince is drawn into a mythic conflict between human industry, nature, anger, and balance.',genre:'Animation · Adventure'},
+  {title:'The Lion King',year:'1994',runtime:89,rating:8.3,genreIds:[16,18,10751],platforms:['Disney+'],moods:['emotional','hopeful','inspired','entertained'],age:'old',overview:'A young lion faces grief, identity, and responsibility in a musical coming-of-age story.',genre:'Animation · Drama'},
+  {title:'Akira',year:'1988',runtime:124,rating:8.0,genreIds:[16,878,28],platforms:['Prime Video','My own watchlist'],moods:['excited','amazed','thoughtful','curious'],age:'old',overview:'A cyberpunk explosion of power, mutation, and social unrest in a collapsing future city.',genre:'Animation · Sci-fi'},
+  {title:'Finding Nemo',year:'2003',runtime:100,rating:8.2,genreIds:[16,10751,12],platforms:['Disney+'],moods:['hopeful','relaxed','happy','entertained'],age:'old',overview:'A worried father crosses the ocean in a colorful, funny journey about trust and letting go.',genre:'Animation · Adventure'},
+  {title:'Dune',year:'2021',runtime:155,rating:7.8,genreIds:[878,12],platforms:['Max','Prime Video','Cinema'],moods:['amazed','thoughtful','excited'],age:'new',overview:'A young heir enters a vast desert world of prophecy, power, ecology, and political danger.',genre:'Sci-fi · Adventure'},
+  {title:'Dune: Part Two',year:'2024',runtime:166,rating:8.5,genreIds:[878,12],platforms:['Cinema','Max','Prime Video'],moods:['amazed','excited','thoughtful'],age:'new',overview:'A desert uprising becomes an epic collision of faith, revenge, spectacle, and destiny.',genre:'Sci-fi · Adventure'},
+  {title:'Nope',year:'2022',runtime:130,rating:6.8,genreIds:[878,27,53],platforms:['Prime Video','Cinema'],moods:['curious','amazed','excited'],age:'new',overview:'A strange presence above a California ranch turns spectacle, fear, and obsession into sci-fi mystery.',genre:'Sci-fi · Thriller'},
+  {title:'The Creator',year:'2023',runtime:134,rating:6.7,genreIds:[878,28,18],platforms:['Disney+','Prime Video'],moods:['thoughtful','excited','emotional'],age:'new',overview:'A future war over artificial intelligence becomes a visually rich story about empathy and survival.',genre:'Sci-fi · Action'},
+  {title:'Tenet',year:'2020',runtime:150,rating:7.2,genreIds:[878,28,53],platforms:['Prime Video'],moods:['curious','excited','thoughtful'],age:'new',overview:'A time-bending mission turns espionage into a puzzle of reversed cause, action, and consequence.',genre:'Sci-fi · Action'},
+  {title:'Perfect Days',year:'2023',runtime:124,rating:7.8,genreIds:[18],platforms:['Cinema','Prime Video'],moods:['relaxed','thoughtful','hopeful'],age:'new',overview:'A quiet Tokyo cleaner finds beauty in routine, trees, music, books, and carefully noticed days.',genre:'Drama'},
+  {title:'Paterson',year:'2016',runtime:118,rating:7.3,genreIds:[18,35,10749],platforms:['Prime Video','My own watchlist'],moods:['relaxed','thoughtful','hopeful'],age:'modern',overview:'A bus driver and poet moves through ordinary days with calm attention, love, and small rituals.',genre:'Drama · Comedy'},
+  {title:'Kiki’s Delivery Service',year:'1989',runtime:103,rating:7.8,genreIds:[16,10751,14],platforms:['Netflix','Max'],moods:['relaxed','hopeful','happy','inspired'],age:'old',overview:'A young witch builds confidence, community, and independence in a gentle seaside city.',genre:'Animation · Family'},
+  {title:'Top Gun: Maverick',year:'2022',runtime:131,rating:8.2,genreIds:[28,18],platforms:['Prime Video','Cinema'],moods:['excited','motivated','entertained'],age:'new',overview:'Elite pilots train for a dangerous mission where speed, trust, and legacy drive the momentum.',genre:'Action · Drama'}
 ].map(movie=>({...movie,release_date:`${movie.year}-01-01`,poster:assistantPosterImage(movie.title),trailerQuery:`${movie.title} official trailer`}));
+const curatedAssistantTitles=new Set(assistantFallback.map(movie=>movie.title));
 
 const assistantDirectorHints={
   'Arrival':'Denis Villeneuve','Interstellar':'Christopher Nolan','Her':'Spike Jonze','The Martian':'Ridley Scott','Blade Runner 2049':'Denis Villeneuve','Before Sunrise':'Richard Linklater','Whiplash':'Damien Chazelle','Mad Max: Fury Road':'George Miller','My Neighbor Totoro':'Hayao Miyazaki','Lost in Translation':'Sofia Coppola','Spider-Man: Into the Spider-Verse':'Bob Persichetti Peter Ramsey Rodney Rothman','Cinema Paradiso':'Giuseppe Tornatore','The Pursuit of Happyness':'Gabriele Muccino','Rocky':'John G. Avildsen','La La Land':'Damien Chazelle','About Time':'Richard Curtis','Ex Machina':'Alex Garland','The Social Network':'David Fincher','The Dark Knight':'Christopher Nolan','Inside Out':'Pete Docter','Everything Everywhere All at Once':'Daniel Kwan Daniel Scheinert','The Grand Budapest Hotel':'Wes Anderson','Parasite':'Bong Joon Ho','Your Name':'Makoto Shinkai','Paddington 2':'Paul King','Sing Street':'John Carney','Amélie':'Jean-Pierre Jeunet','Chef':'Jon Favreau','The Secret Life of Walter Mitty':'Ben Stiller','Soul':'Pete Docter','The Intouchables':'Olivier Nakache Éric Toledano','Little Miss Sunshine':'Jonathan Dayton Valerie Faris','Billy Elliot':'Stephen Daldry','Good Will Hunting':'Gus Van Sant','Remember the Titans':'Boaz Yakin','Hidden Figures':'Theodore Melfi','Moneyball':'Bennett Miller',"The King's Speech":'Tom Hooper','School of Rock':'Richard Linklater','Rudy':'David Anspaugh','October Sky':'Joe Johnston','The Truman Show':'Peter Weir','Mission: Impossible - Fallout':'Christopher McQuarrie','The Fabelmans':'Steven Spielberg'
@@ -964,10 +981,10 @@ const updateAssistantMemory=()=>{
   summary.textContent=`Library active: ${ratings.length} rated, ${watched.length} watched, ${watching.length} watching, ${saved.length} saved${favorite?`. Strongest taste signal: “${favorite}”.`:'.'}`;
   assistantMemory.append(
     summary,
-    createMemoryGroup('Saved',saved,'saved',memory.ratings||{},movies),
-    createMemoryGroup('Watching',watching,'watching',memory.ratings||{},movies),
+    createMemoryGroup('Rated',ratings.map(([title])=>title),'rated',memory.ratings||{},movies),
     createMemoryGroup('Watched',watched,'watched',memory.ratings||{},movies),
-    createMemoryGroup('Rated',ratings.map(([title])=>title),'rated',memory.ratings||{},movies)
+    createMemoryGroup('Watching',watching,'watching',memory.ratings||{},movies),
+    createMemoryGroup('Saved',saved,'saved',memory.ratings||{},movies)
   );
 };
 function getAssistantFilters(){
@@ -987,9 +1004,9 @@ const movieMatchesPlatform=(movie,platform)=>{
 };
 const movieMatchesAge=(movie,age)=>{
   const year=Number(movie.year||(movie.release_date||'').slice(0,4)||0);
-  if(age==='new')return year>=2018;
-  if(age==='modern')return year>=2000&&year<2018;
-  if(age==='old')return year>0&&year<2000;
+  if(age==='new')return year>=2019;
+  if(age==='modern')return year>=2005&&year<=2018;
+  if(age==='old')return year>0&&year<2005;
   return true;
 };
 const movieMatchesTime=(movie,time)=>{
@@ -1228,44 +1245,115 @@ const genrePreferenceScore=(movie,genre)=>{
 };
 const platformPreferenceScore=(movie,platform)=>normalizePlatform(platform)?(movieMatchesPlatform(movie,platform)?8:-4):0;
 const releasePreferenceScore=(movie,age)=>age==='any'?0:(movieMatchesAge(movie,age)?7:-4);
-const scoreAssistantMovie=(movie,answers,memory)=>{
-  let score=Number(movie.rating||movie.vote_average||0)*1.2;
-  score+=genrePreferenceScore(movie,answers.genre);
-  score+=runtimePreferenceScore(movie,answers.time);
-  score+=releasePreferenceScore(movie,answers.age);
-  score+=platformPreferenceScore(movie,answers.platform);
-  score+=moodTransitionScore(movie,answers);
-  score+=tasteMemoryScore(movie,memory);
-  return score;
+const assistantAgeLabels={old:'older classic',modern:'modern classic',new:'newer movie'};
+const assistantTimeLabels={short:'under 100 minutes',medium:'100-140 minutes',long:'over 140 minutes'};
+const selectedGenreId=answers=>answers.genre==='any'?0:Number(answers.genre||0);
+const movieHasSelectedGenre=(movie,answers)=>{
+  const genreId=selectedGenreId(answers);
+  return !genreId||(movie.genreIds||movie.genre_ids||[]).includes(genreId);
+};
+const movieHasSelectedAge=(movie,answers)=>answers.age==='any'||movieMatchesAge(movie,answers.age);
+const movieHasSelectedRuntime=(movie,answers)=>answers.time==='any'||movieMatchesTime(movie,answers.time);
+const movieHasRequiredLibraryStatus=(movie,answers,memory)=>{
+  if(normalizePlatform(answers.platform)!=='library')return true;
+  const title=normalizeMovie(movie).title;
+  return Boolean(memory.items?.[title]||memory.movies?.[title]);
+};
+const strictAssistantCandidate=(movie,answers,memory)=>{
+  const normalized=normalizeMovie(movie);
+  if(!normalized.title)return false;
+  if(!movieHasSelectedGenre(normalized,answers))return false;
+  if(!movieHasSelectedAge(normalized,answers))return false;
+  if(!movieHasSelectedRuntime({...normalized,runtime:movie.runtime},answers))return false;
+  if(!movieHasRequiredLibraryStatus(normalized,answers,memory))return false;
+  return true;
+};
+const scoreAssistantMovieDetailed=(movie,answers,memory)=>{
+  const normalized=normalizeMovie(movie);
+  const reasons=[];
+  let score=Number(normalized.rating||movie.vote_average||0)*1.4;
+  if(curatedAssistantTitles.has(normalized.title))score+=14;
+  const genreId=selectedGenreId(answers);
+  if(genreId){
+    score+=30;
+    reasons.push(genreNames[genreId]||'selected genre');
+  }
+  if(answers.age!=='any'){
+    score+=18;
+    reasons.push(assistantAgeLabels[answers.age]);
+  }
+  if(answers.time!=='any'){
+    score+=12;
+    reasons.push(assistantTimeLabels[answers.time]);
+  }
+  const platform=normalizePlatform(answers.platform);
+  if(platform&&platform!=='library'){
+    const platformKnown=platformValues(movie).length>0;
+    if(movieMatchesPlatform(movie,answers.platform)){score+=10;reasons.push(`${answers.platform} availability`);}
+    else if(platformKnown)score-=10;
+  }
+  const moodScore=moodTransitionScore(movie,answers);
+  score+=moodScore*1.65;
+  if(answers.currentMood!=='any'||answers.targetMood!=='any'){
+    const path=[answers.currentMood,answers.targetMood].filter(value=>value&&value!=='any').join(' to ');
+    reasons.push(`${path} mood path`);
+  }
+  const memoryScore=tasteMemoryScore(movie,memory);
+  score+=memoryScore;
+  if(memoryScore>=3)reasons.push('your library history');
+  return {movie:{...movie,assistantScore:score,assistantReason:assistantMovieReason(answers,reasons)},score,reasons};
+};
+const scoreAssistantMovie=(movie,answers,memory)=>scoreAssistantMovieDetailed(movie,answers,memory).score;
+const assistantMovieReason=(answers,reasons=[])=>{
+  const cleaned=[...new Set(reasons.filter(Boolean))].slice(0,4);
+  if(!cleaned.length)return 'Recommended as one of the strongest overall matches.';
+  return `Matches ${cleaned.join(', ')}.`;
 };
 const assistantExplanation=(answers,movies)=>{
   const genreLabel=answers.genre==='any'?'a surprise genre':(genreNames[answers.genre]||'your selected genre');
   const titles=movies.map(movie=>movie.title).join(', ');
   const memory=getAssistantMemory();
   const topRated=Object.entries(memory.ratings||{}).filter(([,score])=>Number(score)>=8).map(([title])=>title)[0];
-  return `Mood path: ${answers.currentMood} → ${answers.targetMood}. These films are ranked by mood transition, ${genreLabel}, runtime, platform, release preference, and My Library signals. ${topRated?`Because you rated “${topRated}” highly, similar films receive extra weight. `:''}Best choices: ${titles}.`;
+  const ageLabel=answers.age==='any'?'any release era':assistantAgeLabels[answers.age];
+  return `Mood path: ${answers.currentMood} → ${answers.targetMood}. Strict filters applied: ${genreLabel}, ${ageLabel}, runtime, platform, and My Library. ${topRated?`Because you rated “${topRated}” highly, similar films receive extra weight. `:''}Best choices: ${titles}.`;
 };
 const closestAssistantExplanation=(answers,movies)=>{
   const titles=movies.map(movie=>movie.title).join(', ');
-  return `Closest mood path: ${answers.currentMood} → ${answers.targetMood}. The engine relaxed weaker preferences and kept the highest scoring mood matches: ${titles}.`;
+  return `Closest strict matches for ${answers.currentMood} → ${answers.targetMood}. Genre and release-era filters stay enforced while the engine ranks the best remaining mood matches: ${titles}.`;
 };
 const fetchAssistantMovies=async answers=>{
   if(!token)throw new Error('TMDB token not configured');
-  const sortOptions=['popularity.desc','vote_average.desc','revenue.desc','primary_release_date.desc'];
-  const params={include_adult:'false',sort_by:sortOptions[assistantVariant%sortOptions.length],'vote_count.gte':assistantVariant%2?80:120};
-  const firstPage=((assistantVariant*7)%70)+1;
-  const pages=[firstPage,firstPage+3,firstPage+9,firstPage+17,firstPage+28,firstPage+39].map(page=>((page-1)%80)+1);
+  const sortOptions=['vote_average.desc','popularity.desc','primary_release_date.desc'];
+  const params={include_adult:'false',sort_by:sortOptions[assistantVariant%sortOptions.length],'vote_count.gte':'80'};
+  const genreId=selectedGenreId(answers);
+  if(genreId)params.with_genres=String(genreId);
+  params['primary_release_date.lte']=new Date().toISOString().slice(0,10);
+  if(answers.age==='old')params['primary_release_date.lte']='2004-12-31';
+  if(answers.age==='modern'){params['primary_release_date.gte']='2005-01-01';params['primary_release_date.lte']='2018-12-31';}
+  if(answers.age==='new')params['primary_release_date.gte']='2019-01-01';
+  if(answers.time==='short')params['with_runtime.lte']='100';
+  if(answers.time==='medium'){params['with_runtime.gte']='95';params['with_runtime.lte']='140';}
+  if(answers.time==='long')params['with_runtime.gte']='141';
+  const provider=providerMap[normalizePlatform(answers.platform)];
+  if(provider){params.with_watch_providers=provider;params.watch_region='US';}
+  const pages=[1,2,3,4,5,6];
   const responses=await Promise.all(pages.map(page=>tmdb('/discover/movie',{...params,page:String(page)}).catch(()=>({results:[]}))));
   const seen=new Set();
-  return responses.flatMap(data=>data.results||[])
+  const discovered=responses.flatMap(data=>data.results||[])
     .filter(movie=>movie.poster_path)
     .filter(movie=>{
       const key=movie.id||movie.title;
       if(seen.has(key))return false;
       seen.add(key);
       return true;
-    })
-    .map(movie=>enrichAssistantMovie(movie,''));
+    });
+  const detailed=await Promise.all(discovered.slice(0,36).map(async movie=>{
+    try{
+      const details=await tmdb(`/movie/${movie.id}`);
+      return {...movie,...details,genre_ids:movie.genre_ids||details.genres?.map(genre=>genre.id)||[],platforms:provider?[answers.platform]:[]};
+    }catch{return movie;}
+  }));
+  return detailed.map(movie=>enrichAssistantMovie(movie,provider?answers.platform:''));
 };
 const openMovieDetails=async movie=>{
   const normalized=normalizeMovie(movie);
@@ -1344,7 +1432,8 @@ const createAssistantCard=rawMovie=>{
   const movie=normalizeMovie(rawMovie);
   const poster=document.createElement('button'); poster.type='button'; poster.className='wall-poster'; poster.setAttribute('aria-label',`View details for ${movie.title}`);
   const image=document.createElement('img'); image.src=movie.poster||assistantPosterImage(movie.title); image.alt=`Poster for ${movie.title}`; image.loading='eager'; image.decoding='async'; image.addEventListener('error',()=>{image.src=assistantPosterFallback(movie.title)},{once:true});
-  const overlay=document.createElement('span'); overlay.className='wall-poster-overlay'; overlay.innerHTML=`<strong>${movie.title}</strong><small>View Details</small>`;
+  const reason=rawMovie.assistantReason||'Recommended for your selected filters.';
+  const overlay=document.createElement('span'); overlay.className='wall-poster-overlay'; overlay.innerHTML=`<strong>${movie.title}</strong><small>${escapeHTML(reason)}</small>`;
   poster.append(image,overlay); poster.addEventListener('click',()=>openMovieDetails({...rawMovie,...movie}));
   return poster;
 };
@@ -1380,16 +1469,16 @@ const uniqueAssistantMovies=movies=>{
   });
 };
 const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
-  const source=candidates.length?candidates:assistantFallback;
-  const ranked=uniqueAssistantMovies(source)
-    .map(movie=>({movie,score:scoreAssistantMovie(movie,answers,memory)}))
+  const source=uniqueAssistantMovies([...(candidates.length?candidates:[]),...assistantFallback]);
+  const strictSource=source.filter(movie=>strictAssistantCandidate(movie,answers,memory));
+  const ranked=strictSource
+    .map(movie=>scoreAssistantMovieDetailed(movie,answers,memory))
     .sort((a,b)=>b.score-a.score);
-  const topBand=ranked.slice(0,Math.min(18,ranked.length)).map(item=>item.movie);
-  const core=ranked.slice(0,8).map(item=>item.movie);
-  const pool=different?selectAssistantMovies(shuffledMovies(topBand,assistantVariant),ranked.slice(18).map(item=>item.movie),{different:true}):core.slice(0,5);
+  const offset=different&&ranked.length>5?(assistantVariant%Math.max(1,ranked.length-4)):0;
+  const pool=ranked.slice(offset,offset+5).map(item=>item.movie);
   const bestScore=ranked[0]?.score||0;
   const fifthScore=ranked[4]?.score||0;
-  return {pool:pool.slice(0,5),exactEnough:bestScore>18&&fifthScore>10};
+  return {pool:pool.slice(0,5),exactEnough:pool.length>=3&&bestScore>28&&fifthScore>18,ranked};
 };
 const renderPosterWall=movies=>{
   assistantResults.innerHTML='';
@@ -1405,7 +1494,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   lastAssistantFilterSignature=filterSignature;
   assistantPanel.hidden=false; assistantPanel.classList.add('is-visible');
   if(!token||!assistantResults.children.length){
-    const local={...getAssistantMoviePool(assistantFallback,answers,memory,{different:true}),source:assistantFallback};
+    const local={...getAssistantMoviePool(assistantFallback,answers,memory,{different}),source:assistantFallback};
     renderPosterWall(local.pool);
     assistantReason.textContent=local.exactEnough?assistantExplanation(answers,local.pool.map(normalizeMovie)):closestAssistantExplanation(answers,local.pool.map(normalizeMovie));
     console.log('Assistant filters changed:', answers);
@@ -1431,7 +1520,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   }catch(error){
     if(requestId!==assistantRenderRequest)return;
     const fallbackForCurrentFilters=assistantFallback;
-    const pool=selectAssistantMovies([],fallbackForCurrentFilters,{different:true});
+    const {pool}=getAssistantMoviePool(fallbackForCurrentFilters,answers,memory,{different});
     console.log('Assistant filters changed:', answers);
     console.log('New movie results:', pool);
     renderPosterWall(pool);
@@ -1442,7 +1531,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
 const renderAssistantRecommendations=updateMovieWall;
 assistantForm?.addEventListener('submit',async event=>{
   event.preventDefault();
-  updateMovieWall({scroll:true,different:true});
+  updateMovieWall({scroll:true,different:false});
 });
 assistantForm?.addEventListener('change',event=>{
   if(!event.target.matches('select,input,[data-assistant-filter]')||!assistantPanel)return;
