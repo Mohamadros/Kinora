@@ -1,4 +1,4 @@
-/* Cinema in the Digital Age — framework-free interactions.
+/* CineScope — framework-free interactions.
    Add a TMDB Read Access Token in hugo.toml to enable live movie data.
    A static Hugo site exposes browser-side tokens. For a public production
    project, route TMDB requests through a serverless function instead. */

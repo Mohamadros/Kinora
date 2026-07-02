@@ -1,6 +1,6 @@
 baseURL = "https://mohamadros.github.io/cinema-digital-age.com/"
 locale = "en-US"
-title = "Cinema in the Digital Age"
+title = "CineScope"
 enableRobotsTXT = true
 
 [params]
@@ -32,21 +32,13 @@ enableRobotsTXT = true
   url = "/#mood-finder"
   weight = 20
 [[menu.main]]
-  name = "Release Watch"
+  name = "Upcoming Movies"
   url = "/#coming-soon"
   weight = 30
 [[menu.main]]
-  name = "Critical Frames"
-  url = "/#journal"
+  name = "Journal"
+  url = "/journal/"
   weight = 40
-[[menu.main]]
-  name = "Interviews"
-  url = "/#interviews"
-  weight = 50
-[[menu.main]]
-  name = "Voices"
-  url = "/#community"
-  weight = 60
 [[menu.main]]
   name = "About"
   url = "/#about"

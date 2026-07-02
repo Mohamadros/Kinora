@@ -1,0 +1,84 @@
+{{ define "main" }}
+{{ $journal := site.GetPage "/journal" }}
+{{ $interviews := site.GetPage "/interviews" }}
+{{ $community := site.GetPage "/community" }}
+
+<article class="section journal-page-intro">
+  <div class="section-shell">
+    {{ partial "section-heading.html" . }}
+  </div>
+</article>
+
+<section id="blog-reviews" class="section journal-section">
+  <div class="section-shell">
+    <header class="section-heading reveal">
+      <h2>Blog Reviews</h2>
+      <p class="section-intro">Film reviews, thoughtful criticism</p>
+    </header>
+    <div class="journal-tools reveal">
+      <div class="filter-pills" role="group" aria-label="Filter blog reviews by category"><button class="is-active" data-journal-filter="all" type="button">All entries</button>{{ range site.Taxonomies.categories }}<button data-journal-filter="{{ .Page.Title | urlize }}" type="button">{{ .Page.Title }}</button>{{ end }}</div>
+      <label class="journal-search"><span class="sr-only">Search blog reviews</span><input type="search" data-journal-search placeholder="Search reviews…"><span aria-hidden="true">⌕</span></label>
+    </div>
+    {{ $reviews := $journal.RegularPages.ByDate.Reverse }}
+    <div class="criticism-layout" data-journal-grid>
+      <div class="featured-review">
+        <p class="archive-label">Newest review</p>
+        {{ with index $reviews 0 }}{{ partial "journal-ticket.html" . }}{{ end }}
+      </div>
+      <aside class="review-archive reveal" aria-label="Previous blog reviews">
+        <div class="archive-header"><p class="archive-label">Review archive</p><p>Older reflections, compact and easy to browse.</p></div>
+        <div class="archive-list">
+          {{ range after 1 $reviews }}
+          {{ $poster := .Params.poster }}
+          {{ $posterURL := cond (hasPrefix $poster "http") $poster ($poster | relURL) }}
+          <a class="archive-item" href="{{ .RelPermalink }}" data-journal-entry data-category="{{ delimit (apply .Params.categories "urlize" ".") " " }}" data-search="{{ lower (printf "%s %s %s %s" .Title .Summary .Params.hook (delimit .Params.tags " ")) }}">
+            <img src="{{ $posterURL }}" alt="Movie poster for {{ .Title }}" loading="lazy" onerror="this.onerror=null;this.src='{{ "images/movie-poster-fallback.svg" | relURL }}';">
+            <span class="archive-copy"><span class="archive-title">{{ .Title }}</span><span class="archive-hook">{{ with .Params.hook }}{{ . }}{{ else }}{{ .Summary }}{{ end }}</span><span class="archive-rating" aria-label="{{ .Params.rating }} out of 5 stars">{{ strings.Repeat .Params.rating "★" }}{{ strings.Repeat (sub 5 .Params.rating) "☆" }}</span></span>
+            <span class="archive-arrow" aria-hidden="true">›</span>
+          </a>
+          {{ end }}
+        </div>
+      </aside>
+    </div>
+    <p class="empty-state" data-journal-empty hidden>No blog reviews match that search.</p>
+  </div>
+</section>
+
+<section id="community" class="section community-section">
+  <div class="section-shell">
+    {{ partial "section-heading.html" $community }}
+    <div class="community-layout community-browser reveal">
+      <form class="memory-form reveal" name="community-reviews" method="POST" data-netlify="true" netlify-honeypot="bot-field" data-community-form>
+        <input type="hidden" name="form-name" value="community-reviews"><p class="honeypot"><label>Do not fill this out: <input name="bot-field"></label></p>
+        <div class="form-grid"><label>Name<input name="name" required placeholder="Your name"></label><div class="movie-search-field"><label for="community-movie-search">Movie title</label><input id="community-movie-search" name="movie" required placeholder="Search TMDb for the film" autocomplete="off" aria-autocomplete="list" aria-expanded="false" aria-controls="community-movie-suggestions" data-community-movie-search><input name="tmdbId" type="hidden" data-community-tmdb-id><input name="releaseYear" type="hidden" data-community-release-year><input name="posterPath" type="hidden" data-community-poster-path><input name="poster" type="hidden" data-community-poster-url><div id="community-movie-suggestions" class="movie-suggestions" role="listbox" data-community-movie-suggestions hidden></div><div class="movie-poster-preview" data-community-poster-preview hidden><img alt=""><span></span></div></div><label>Review title<input name="review-title" required placeholder="A short headline"></label><label>Rating<select name="rating" required><option value="">Choose rating</option><option>5 — Exceptional</option><option>4 — Great</option><option>3 — Good</option><option>2 — Fair</option><option>1 — Disappointing</option></select></label><label>Cinema name<input name="cinema" placeholder="Where did you see it?"></label><label>Feeling before<input name="feeling-before" placeholder="e.g. Stressed"></label><label>Feeling after<input name="feeling-after" placeholder="e.g. Inspired"></label><label>Recommend?<select name="recommend" required><option value="">Choose one</option><option>Yes</option><option>No</option><option>Maybe</option></select></label><label class="form-wide">Your cinema experience<textarea name="experience" required rows="5" placeholder="What stayed with you after the credits?"></textarea></label></div>
+        <button class="button" type="submit"><span>Add review</span><span aria-hidden="true">＋</span></button><p class="form-message" data-community-message aria-live="polite"></p>
+      </form>
+      <div class="community-archive" aria-label="Scroll-controlled community review shelf">
+        <div class="shelf-header"><span>Review Archive</span></div>
+        <div class="memory-wall" tabindex="0" aria-label="Recent community reviews" data-community-deck data-active-index="0">
+          <article class="memory-case" tabindex="0" aria-label="Open Lea's review of Dune: Part Two" data-movie="Dune: Part Two" data-tmdb-id="693134" data-release-year="2024" data-poster-path="/heM4XKC0jA8fTSNe8F7oUkcJV7Z.jpg" data-review-title="A cathedral built from sand and sound" data-rating="5" data-author="Lea" data-date="2026-06-18" data-cinema="Kino International" data-poster="https://image.tmdb.org/t/p/w500/heM4XKC0jA8fTSNe8F7oUkcJV7Z.jpg" data-experience="The score and the scale of the desert made everything outside the auditorium disappear." data-preview="The score and the scale of the desert made everything outside the auditorium disappear." data-before="Stressed" data-after="Inspired" data-recommend="Yes"><img src="https://image.tmdb.org/t/p/w500/heM4XKC0jA8fTSNe8F7oUkcJV7Z.jpg" alt="Poster thumbnail for Dune: Part Two" loading="eager" decoding="async" onerror="this.onerror=null;this.src='{{ "images/movie-poster-fallback.svg" | relURL }}';"><span class="case-spine"><span class="memory-rating">★★★★★</span><strong>Dune: Part Two</strong><em>A cathedral built from sand and sound</em><p>The score and scale made the auditorium disappear.</p><small>Lea · Jun 18, 2026</small></span></article>
+          <article class="memory-case" tabindex="0" aria-label="Open Sam's review of Perfect Days" data-movie="Perfect Days" data-tmdb-id="976893" data-release-year="2023" data-poster-path="/mjEk5Wwx6TYVqw29zSaUHclMIgp.jpg" data-review-title="The city felt quieter afterward" data-rating="4" data-author="Sam" data-date="2026-06-09" data-cinema="Filmtheater am Friedrichshain" data-poster="https://image.tmdb.org/t/p/w500/mjEk5Wwx6TYVqw29zSaUHclMIgp.jpg" data-experience="I left noticing the city differently: quieter, slower, and with more attention." data-preview="I left noticing the city differently: quieter, slower, and with more attention." data-before="Restless" data-after="Calm" data-recommend="Yes"><img src="https://image.tmdb.org/t/p/w500/mjEk5Wwx6TYVqw29zSaUHclMIgp.jpg" alt="Poster thumbnail for Perfect Days" loading="eager" decoding="async" onerror="this.onerror=null;this.src='{{ "images/movie-poster-fallback.svg" | relURL }}';"><span class="case-spine"><span class="memory-rating">★★★★☆</span><strong>Perfect Days</strong><em>The city felt quieter afterward</em><p>I left noticing the city differently.</p><small>Sam · Jun 9, 2026</small></span></article>
+          <article class="memory-case" tabindex="0" aria-label="Open Noor's review of Past Lives" data-movie="Past Lives" data-tmdb-id="666277" data-release-year="2023" data-poster-path="/k3waqVXSnvCZWfJYNtdamTgTtTA.jpg" data-review-title="A film about the lives beside this one" data-rating="5" data-author="Noor" data-date="2026-05-27" data-cinema="Babylon" data-poster="https://image.tmdb.org/t/p/w500/k3waqVXSnvCZWfJYNtdamTgTtTA.jpg" data-experience="It felt precise and private, like watching two people understand the shape of a choice without needing to explain it." data-preview="Precise and private, like watching two people understand the shape of a choice." data-before="Thoughtful" data-after="Moved" data-recommend="Yes"><img src="https://image.tmdb.org/t/p/w500/k3waqVXSnvCZWfJYNtdamTgTtTA.jpg" alt="Poster thumbnail for Past Lives" loading="eager" decoding="async" onerror="this.onerror=null;this.src='{{ "images/movie-poster-fallback.svg" | relURL }}';"><span class="case-spine"><span class="memory-rating">★★★★★</span><strong>Past Lives</strong><em>A film about the lives beside this one</em><p>Two people quietly understand the shape of a choice.</p><small>Noor · May 27, 2026</small></span></article>
+          <article class="memory-case" tabindex="0" aria-label="Open Mateo's review of Dogville" data-movie="Dogville" data-tmdb-id="553" data-release-year="2003" data-poster-path="/lraVawavIXh5geMlVjpzCw9TGwR.jpg" data-review-title="A stage that becomes a trap" data-rating="4" data-author="Mateo" data-date="2026-05-12" data-cinema="Arsenal" data-poster="https://image.tmdb.org/t/p/w500/lraVawavIXh5geMlVjpzCw9TGwR.jpg" data-experience="The bare set made every gesture feel exposed. By the end, the room felt less like a cinema and more like a jury box." data-preview="The bare set made every gesture feel exposed, almost like a jury box." data-before="Curious" data-after="Uneasy" data-recommend="Maybe"><img src="https://image.tmdb.org/t/p/w500/lraVawavIXh5geMlVjpzCw9TGwR.jpg" alt="Poster thumbnail for Dogville" loading="eager" decoding="async" onerror="this.onerror=null;this.src='{{ "images/movie-poster-fallback.svg" | relURL }}';"><span class="case-spine"><span class="memory-rating">★★★★☆</span><strong>Dogville</strong><em>A stage that becomes a trap</em><p>The bare set made every gesture feel exposed.</p><small>Mateo · May 12, 2026</small></span></article>
+        </div>
+        <p class="shelf-position" aria-live="polite"><span data-community-current>01</span> / <span data-community-total>04</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="interviews" class="section interview-section" style="--section-image:url('{{ $interviews.Params.background | relURL }}')">
+  <div class="section-shell">
+    {{ partial "section-heading.html" $interviews }}
+    <div class="stats-grid">
+      {{ range $interviews.Params.stats }}<article class="stat-card reveal"><strong>{{ .value }}<span>%</span></strong><p>{{ .label }}</p><div class="stat-track"><i style="--value:{{ .value }}%"></i></div></article>{{ end }}
+    </div>
+    <div class="quote-grid">
+      {{ range $interviews.Params.quotes }}<figure class="quote-card reveal"><span class="quote-mark" aria-hidden="true">“</span><blockquote>{{ .quote }}</blockquote><figcaption><small>{{ .question }}</small><span>{{ .person }}</span></figcaption></figure>{{ end }}
+    </div>
+    <aside class="research-note reveal">{{ $interviews.Content }}</aside>
+  </div>
+</section>
+
+<dialog class="community-dialog" data-community-dialog aria-label="Community review"><article data-community-dialog-content></article></dialog>
+{{ end }}

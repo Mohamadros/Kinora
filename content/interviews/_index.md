@@ -1,5 +1,5 @@
 +++
-title = "Cinema in Their Words"
+title = "Interviews"
 kicker = "Interview results"
 intro = "Audience voices reveal how streaming has changed habits without replacing the social power of the cinema."
 background = "images/auditorium-seats.png"

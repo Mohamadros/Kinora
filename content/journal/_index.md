@@ -1,6 +1,6 @@
 +++
-title = "Critical Frames"
-kicker = "Thoughts. Frames. Perspectives."
-intro = "Film reviews, thoughtful criticism"
+title = "Journal"
+kicker = "Reviews. Community. Interviews."
+intro = "Read reviews, community opinions, and interviews"
 weight = 30
 +++
