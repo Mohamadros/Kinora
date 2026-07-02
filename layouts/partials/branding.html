@@ -1,0 +1,5 @@
+{{ $logo := site.Params.brandLogo | default "images/kinora-logo.png" }}
+<span class="brand-lockup">
+  <span class="brand-mark" aria-hidden="true"><img src="{{ $logo | relURL }}" alt=""></span>
+  <span class="brand-name">{{ site.Title }}</span>
+</span>

@@ -1,4 +1,4 @@
-/* CineScope — framework-free interactions.
+/* Framework-free interactions.
    Add a TMDB Read Access Token in hugo.toml to enable live movie data.
    A static Hugo site exposes browser-side tokens. For a public production
    project, route TMDB requests through a serverless function instead. */
@@ -6,6 +6,8 @@
 const header = document.querySelector('[data-header]');
 const toggle = document.querySelector('.nav-toggle');
 const nav = document.querySelector('.primary-nav');
+const navDropdown = document.querySelector('[data-nav-dropdown]');
+const navDropdownToggle = document.querySelector('[data-nav-dropdown-toggle]');
 const token = document.querySelector('meta[name="tmdb-token"]')?.content.trim() || '';
 const siteRoot = document.body?.dataset.siteRoot || '/';
 const apiBase = 'https://api.themoviedb.org/3';
@@ -24,7 +26,25 @@ toggle?.addEventListener('click', () => {
   document.body.classList.toggle('nav-open', !open);
 });
 nav?.querySelectorAll('a').forEach(link => link.addEventListener('click', closeNav));
+const closeNavDropdown=()=>navDropdownToggle?.setAttribute('aria-expanded','false');
+navDropdownToggle?.addEventListener('click',event=>{
+  event.stopPropagation();
+  const open=navDropdownToggle.getAttribute('aria-expanded')==='true';
+  navDropdownToggle.setAttribute('aria-expanded',String(!open));
+});
+navDropdown?.addEventListener('mouseenter',()=>navDropdownToggle?.setAttribute('aria-expanded','true'));
+navDropdown?.addEventListener('mouseleave',closeNavDropdown);
+navDropdown?.querySelectorAll('a').forEach(link=>link.addEventListener('click',()=>{closeNavDropdown();closeNav();}));
+document.addEventListener('click',event=>{if(navDropdown&&!navDropdown.contains(event.target))closeNavDropdown();});
 window.addEventListener('scroll', () => header?.classList.toggle('is-scrolled', scrollY > 40), { passive: true });
+const focusMovieMatchInput=()=>{
+  if(location.hash!=='#mood-finder')return;
+  const input=document.querySelector('[data-decision-form] select,[data-decision-form] input,[data-decision-form] button');
+  setTimeout(()=>input?.focus({preventScroll:true}),350);
+};
+document.querySelectorAll('a[href$="#mood-finder"]').forEach(link=>link.addEventListener('click',focusMovieMatchInput));
+window.addEventListener('hashchange',focusMovieMatchInput);
+focusMovieMatchInput();
 
 const revealObserver = new IntersectionObserver(entries => entries.forEach(entry => {
   if (entry.isIntersecting) { entry.target.classList.add('is-visible'); revealObserver.unobserve(entry.target); }

@@ -1,12 +1,23 @@
 <header class="site-header" data-header>
-  <a class="brand" href="{{ site.Home.RelPermalink }}" aria-label="CineScope, home">
-    <span class="brand-mark" aria-hidden="true"></span>
-    <span>CineScope</span>
+  <a class="brand" href="{{ site.Home.RelPermalink }}" aria-label="{{ site.Title }}, home">
+    {{ partial "branding.html" . }}
   </a>
   <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="primary-nav" aria-label="Open navigation">
     <span></span><span></span>
   </button>
   <nav id="primary-nav" class="primary-nav" aria-label="Primary navigation">
-    {{ range site.Menus.main }}<a href="{{ .URL }}">{{ .Name }}</a>{{ end }}
+    {{ range site.Menus.main }}
+    {{ if eq .Name "About" }}
+    <div class="nav-dropdown" data-nav-dropdown>
+      <button class="nav-dropdown-toggle" type="button" aria-expanded="false" aria-controls="journal-menu" data-nav-dropdown-toggle>Journal</button>
+      <div id="journal-menu" class="nav-dropdown-menu" data-nav-dropdown-menu>
+        <a href="{{ "journal/#blog-reviews" | relURL }}">Critical Frames</a>
+        <a href="{{ "journal/#community" | relURL }}">Community</a>
+        <a href="{{ "journal/#interviews" | relURL }}">Interviews</a>
+      </div>
+    </div>
+    {{ end }}
+    <a href="{{ .URL }}">{{ .Name }}</a>
+    {{ end }}
   </nav>
 </header>

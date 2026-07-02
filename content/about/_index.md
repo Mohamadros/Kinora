@@ -9,6 +9,6 @@ year = "2026"
 weight = 60
 +++
 
-**CineScope** asks why the theatrical experience still matters when films are available almost everywhere. It combines personal film writing, audience interviews, emotional discovery, and community participation.
+This project asks why the theatrical experience still matters when films are available almost everywhere. It combines personal film writing, audience interviews, emotional discovery, and community participation.
 
 The project treats the website as a digital cinema: not simply somewhere to read, but somewhere to choose, feel, remember, and contribute.

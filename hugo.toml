@@ -1,6 +1,6 @@
 baseURL = "https://mohamadros.github.io/cinema-digital-age.com/"
 locale = "en-US"
-title = "CineScope"
+title = "Kinora"
 enableRobotsTXT = true
 
 [params]
@@ -8,6 +8,7 @@ enableRobotsTXT = true
   author = "Your Name"
   university = "Your University"
   heroImage = "images/hero-red-curtain.jpg"
+  brandLogo = "images/kinora-logo.png"
   accentColor = "#d4af37"
   # Add a TMDB API Read Access Token here. For a production site, prefer a
   # serverless proxy so the token is not exposed in the browser source.
@@ -35,10 +36,6 @@ enableRobotsTXT = true
   name = "Upcoming Movies"
   url = "/#coming-soon"
   weight = 30
-[[menu.main]]
-  name = "Journal"
-  url = "/journal/"
-  weight = 40
 [[menu.main]]
   name = "About"
   url = "/#about"
