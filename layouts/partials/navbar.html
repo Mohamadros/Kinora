@@ -9,8 +9,8 @@
     {{ range site.Menus.main }}
     {{ if eq .Name "About" }}
     <div class="nav-dropdown" data-nav-dropdown>
-      <button class="nav-dropdown-toggle" type="button" aria-expanded="false" aria-controls="journal-menu" data-nav-dropdown-toggle>Journal</button>
-      <div id="journal-menu" class="nav-dropdown-menu" data-nav-dropdown-menu>
+      <button class="nav-dropdown-toggle" type="button" aria-expanded="false" aria-controls="blog-menu" data-nav-dropdown-toggle>Blog</button>
+      <div id="blog-menu" class="nav-dropdown-menu" data-nav-dropdown-menu>
         <a href="{{ "journal/#blog-reviews" | relURL }}">Critical Frames</a>
         <a href="{{ "journal/#community" | relURL }}">Community</a>
         <a href="{{ "journal/#interviews" | relURL }}">Interviews</a>

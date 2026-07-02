@@ -27,13 +27,18 @@ toggle?.addEventListener('click', () => {
 });
 nav?.querySelectorAll('a').forEach(link => link.addEventListener('click', closeNav));
 const closeNavDropdown=()=>navDropdownToggle?.setAttribute('aria-expanded','false');
+const openNavDropdown=()=>navDropdownToggle?.setAttribute('aria-expanded','true');
+const supportsHoverDropdown=()=>innerWidth>1000&&matchMedia('(hover: hover) and (pointer: fine)').matches;
 navDropdownToggle?.addEventListener('click',event=>{
   event.stopPropagation();
   const open=navDropdownToggle.getAttribute('aria-expanded')==='true';
   navDropdownToggle.setAttribute('aria-expanded',String(!open));
 });
-navDropdown?.addEventListener('mouseenter',()=>navDropdownToggle?.setAttribute('aria-expanded','true'));
-navDropdown?.addEventListener('mouseleave',closeNavDropdown);
+navDropdown?.addEventListener('mouseenter',()=>{if(supportsHoverDropdown())openNavDropdown();});
+navDropdown?.addEventListener('pointerenter',()=>{if(supportsHoverDropdown())openNavDropdown();});
+navDropdown?.addEventListener('focusin',()=>{if(supportsHoverDropdown())openNavDropdown();});
+navDropdown?.addEventListener('mouseleave',()=>{if(supportsHoverDropdown())closeNavDropdown();});
+navDropdown?.addEventListener('pointerleave',()=>{if(supportsHoverDropdown())closeNavDropdown();});
 navDropdown?.querySelectorAll('a').forEach(link=>link.addEventListener('click',()=>{closeNavDropdown();closeNav();}));
 document.addEventListener('click',event=>{if(navDropdown&&!navDropdown.contains(event.target))closeNavDropdown();});
 window.addEventListener('scroll', () => header?.classList.toggle('is-scrolled', scrollY > 40), { passive: true });

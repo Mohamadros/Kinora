@@ -4,7 +4,7 @@
     {{ $poster := .Params.poster }}
     {{ $posterURL := cond (hasPrefix $poster "http") $poster ($poster | relURL) }}
     <img src="{{ $posterURL }}" alt="Movie poster for {{ .Title }}" onerror="this.onerror=null;this.src='{{ "images/movie-poster-fallback.svg" | relURL }}';">
-    <div><a class="back-link" href="{{ site.Home.RelPermalink }}#journal">← Return to the journal</a><h1>{{ .Title }}</h1><div class="stars" aria-label="{{ .Params.rating }} out of 5 stars">{{ strings.Repeat .Params.rating "★" }}{{ strings.Repeat (sub 5 .Params.rating) "☆" }}</div><p class="journal-deck">{{ .Summary }}</p></div>
+    <div><a class="back-link" href="{{ "journal/#blog-reviews" | relURL }}">← Return to the blog</a><h1>{{ .Title }}</h1><div class="stars" aria-label="{{ .Params.rating }} out of 5 stars">{{ strings.Repeat .Params.rating "★" }}{{ strings.Repeat (sub 5 .Params.rating) "☆" }}</div><p class="journal-deck">{{ .Summary }}</p></div>
   </header>
   <div class="journal-page-body"><main><p class="card-label">What impressed me</p>{{ .Content }}</main><aside><div><span>Favorite scene</span><p>{{ .Params.favorite_scene }}</p></div><div><span>Would I recommend it?</span><p>{{ .Params.recommendation }}</p></div><div class="ticket-tags">{{ range .Params.tags }}<span>{{ . }}</span>{{ end }}</div></aside></div>
 </article>
