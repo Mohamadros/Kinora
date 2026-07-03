@@ -67,9 +67,18 @@ document.querySelectorAll('a[href*="#"]').forEach(link=>link.addEventListener('c
   closeNav();
   scrollToHashTarget(hash,{updateHistory:true});
 }));
+let hashScrollTimers=[];
+const clearHashScrollTimers=()=>{hashScrollTimers.forEach(timer=>clearTimeout(timer));hashScrollTimers=[];};
 const correctHashScroll=()=>{if(location.hash)requestAnimationFrame(()=>scrollToHashTarget(location.hash,{behavior:'auto'}));};
-window.addEventListener('load',()=>{correctHashScroll();setTimeout(correctHashScroll,180);});
-window.addEventListener('hashchange',()=>setTimeout(correctHashScroll,0));
+const stabilizeHashScroll=()=>{
+  clearHashScrollTimers();
+  [0,80,180,360,720,1200,2000,3200].forEach(delay=>{
+    hashScrollTimers.push(setTimeout(correctHashScroll,delay));
+  });
+};
+window.addEventListener('load',stabilizeHashScroll);
+window.addEventListener('pageshow',stabilizeHashScroll);
+window.addEventListener('hashchange',stabilizeHashScroll);
 const focusMovieMatchInput=()=>{
   if(location.hash!=='#mood-finder')return;
   const input=document.querySelector('[data-decision-form] select,[data-decision-form] input,[data-decision-form] button');
