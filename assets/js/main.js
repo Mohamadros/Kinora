@@ -1474,6 +1474,38 @@ const warmAssistantMovieCache=async ({force=false}={})=>{
   }).finally(()=>{assistantCachePromise=null;});
   return assistantCachePromise;
 };
+const exactMovieTitleKey=value=>String(value||'').trim().replace(/\s+/g,' ').toLowerCase();
+const seededCommunityReviews=[
+  {movie:'Dune: Part Two',tmdbId:'693134',releaseYear:'2024'},
+  {movie:'Perfect Days',tmdbId:'976893',releaseYear:'2023'},
+  {movie:'Past Lives',tmdbId:'666277',releaseYear:'2023'},
+  {movie:'Dogville',tmdbId:'553',releaseYear:'2003'}
+];
+const communityReviewRecordMatchesMovie=(record,movie)=>{
+  if(!record||!movie)return false;
+  const movieTmdbId=String(movie.tmdbId||movie.id||'').trim();
+  if(movieTmdbId&&String(record.tmdbId||record.id||'').trim()===movieTmdbId)return true;
+  const movieTitle=exactMovieTitleKey(movie.title);
+  const reviewTitle=exactMovieTitleKey(record.movie||record.title);
+  const movieYear=String(movie.year||'').trim();
+  const reviewYear=String(record.releaseYear||record.year||'').trim();
+  return !!movieTitle&&movieTitle===reviewTitle&&!!movieYear&&movieYear===reviewYear;
+};
+const communityReviewRecordFromCard=card=>({
+  movie:card.dataset.movie,
+  tmdbId:card.dataset.tmdbId,
+  releaseYear:card.dataset.releaseYear
+});
+const communityReviewRecords=()=>[
+  ...seededCommunityReviews,
+  ...[...document.querySelectorAll('.memory-case')].map(communityReviewRecordFromCard),
+  ...savedCommunityMemories()
+];
+const communityReviewsForMovie=movie=>communityReviewRecords().filter(record=>communityReviewRecordMatchesMovie(record,movie));
+const communityReviewUrlForMovie=movie=>{
+  const title=encodeURIComponent(movie.title||'');
+  return `${siteRoot}journal/?review=${title}#community`;
+};
 const openMovieDetails=async movie=>{
   const normalized=normalizeMovie(movie);
   if(normalized.id&&token&&!normalized.imdbId){
@@ -1511,6 +1543,15 @@ const openMovieDetails=async movie=>{
   const save=document.createElement('button'); save.type='button'; save.textContent='Save';
   const watched=document.createElement('button'); watched.type='button'; watched.textContent='Watched';
   const trailer=document.createElement('button'); trailer.type='button'; trailer.textContent='Trailer';
+  const communityMatches=communityReviewsForMovie(normalized);
+  const communityButton=document.createElement('button'); communityButton.type='button'; communityButton.textContent=communityMatches.length?'Community Reviews':'No community reviews yet';
+  communityButton.className='community-review-action';
+  communityButton.disabled=!communityMatches.length;
+  communityButton.addEventListener('click',()=>{
+    if(!communityMatches.length)return;
+    trailerDialog.close();
+    location.href=communityReviewUrlForMovie(normalized);
+  });
   const ratingPanel=document.createElement('div'); ratingPanel.className='watched-rating-panel'; ratingPanel.hidden=true;
   const ratingQuestion=document.createElement('p'); ratingQuestion.textContent='How would you rate this movie?';
   const ratingScale=document.createElement('div'); ratingScale.className='watched-rating-scale';
@@ -1542,7 +1583,7 @@ const openMovieDetails=async movie=>{
   save.addEventListener('click',()=>{const next=getAssistantMemory();const isActive=next.items?.[normalized.title]?.status==='saved';setAssistantMemory(isActive?setAssistantMovieStatus(next,movie,''):setAssistantMovieStatus(next,movie,'saved'));sync();});
   watched.addEventListener('click',()=>{const next=getAssistantMemory();const status=next.items?.[normalized.title]?.status;setAssistantMemory(status==='watched'||status==='rated'?setAssistantMovieStatus(next,movie,''):setAssistantMovieStatus(next,movie,'watched'));sync();});
   trailer.addEventListener('click',()=>openTrailer(normalized));
-  actions.append(save,watched,trailer); detail.append(title,meta,storyLabel,overview,ratings,actions,ratingPanel); content.append(detail); message.textContent=''; sync(); trailerDialog.showModal();
+  actions.append(save,watched,trailer,communityButton); detail.append(title,meta,storyLabel,overview,ratings,actions,ratingPanel); content.append(detail); message.textContent=''; sync(); trailerDialog.showModal();
 };
 const createAssistantCard=rawMovie=>{
   const movie=normalizeMovie(rawMovie);
@@ -1651,26 +1692,14 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   if(scroll)assistantPanel.scrollIntoView({behavior:'smooth',block:'start'});
 };
 const renderAssistantRecommendations=updateMovieWall;
-let assistantFilterTimer;
 assistantForm?.addEventListener('submit',async event=>{
   event.preventDefault();
   updateMovieWall({scroll:true,different:false});
-});
-assistantForm?.addEventListener('change',event=>{
-  if(!event.target.matches('select,input,[data-assistant-filter]')||!assistantPanel)return;
-  clearTimeout(assistantFilterTimer);
-  assistantFilterTimer=setTimeout(()=>updateMovieWall({scroll:false,different:false}),80);
-});
-assistantForm?.addEventListener('input',event=>{
-  if(!event.target.matches('select,input,[data-assistant-filter]')||!assistantPanel)return;
-  clearTimeout(assistantFilterTimer);
-  assistantFilterTimer=setTimeout(()=>updateMovieWall({scroll:false,different:false}),120);
 });
 assistantRefreshButton?.addEventListener('click',()=>updateMovieWall({different:true,scroll:false}));
 document.querySelector('[data-clear-decision-memory]')?.addEventListener('click',()=>{try{localStorage.removeItem(assistantStorageKey);}catch{}updateAssistantMemory();});
 assistantLibrarySearch?.addEventListener('input',updateAssistantMemory);
 updateAssistantMemory();
-if(assistantForm)setTimeout(()=>warmAssistantMovieCache().catch(()=>{}),350);
 
 const communityForm=document.querySelector('[data-community-form]');
 const communityMovieInput=communityForm?.querySelector('[data-community-movie-search]');
@@ -1972,6 +2001,13 @@ const applyCommunityReviewSearch=()=>{
   allCommunityCards().forEach(card=>{card.hidden=!communityCaseMatchesSearch(card,query);});
   updateCommunityDeck(0);
 };
+const applyCommunityReviewDeepLink=()=>{
+  if(!communityReviewSearch)return;
+  const reviewQuery=new URLSearchParams(location.search).get('review');
+  if(!reviewQuery)return;
+  communityReviewSearch.value=reviewQuery;
+  applyCommunityReviewSearch();
+};
 const moveCommunityDeck=direction=>{
   if(!memoryWall||!communityCards.length)return false;
   const nextIndex=communityActiveIndex+direction;
@@ -2095,6 +2131,7 @@ if(!localStorage.getItem(communityTestCleanupKey)){
 }
 savedCommunityMemories().forEach(memory=>addMemoryCard({...memory,isLocal:true}));
 applyCommunityReviewSearch();
+applyCommunityReviewDeepLink();
 updateGraceControls();
 upgradeSavedCommunityPosters();
 communityForm?.addEventListener('submit',async event=>{
