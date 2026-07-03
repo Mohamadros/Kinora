@@ -44,7 +44,7 @@ navDropdown?.querySelectorAll('a').forEach(link=>link.addEventListener('click',(
 document.addEventListener('click',event=>{if(navDropdown&&!navDropdown.contains(event.target))closeNavDropdown();});
 window.addEventListener('scroll', () => header?.classList.toggle('is-scrolled', scrollY > 40), { passive: true });
 const headerScrollOffset=()=>Math.ceil((header?.getBoundingClientRect().height||78)+8);
-const scrollToHashTarget=(hash,{behavior='smooth',updateHistory=false}={})=>{
+const scrollToHashTarget=(hash,{behavior='auto',updateHistory=false}={})=>{
   if(!hash||hash==='#')return false;
   const target=document.getElementById(decodeURIComponent(hash.slice(1)));
   if(!target)return false;
