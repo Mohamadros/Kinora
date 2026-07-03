@@ -83,6 +83,7 @@ const assistantPosterFallback = title => {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 };
 
+const movieGenreIds=movie=>movie.genre_ids||movie.genreIds||(movie.genres||[]).map(genre=>genre.id).filter(Boolean)||[];
 const normalizeMovie = movie => ({
   id: movie.id || null,
   title: movie.title,
@@ -91,8 +92,8 @@ const normalizeMovie = movie => ({
   rating: Number(movie.vote_average ?? movie.rating ?? 0).toFixed(1),
   overview: movie.overview || 'Details will be announced closer to release.',
   poster: movie.poster_path ? `${imageBase}${movie.poster_path}` : (movie.poster || posterFallback(movie.title)),
-  genreIds: movie.genre_ids || movie.genreIds || [],
-  genre: movie.genre || (movie.genre_ids || []).slice(0, 2).map(id => genreNames[id]).filter(Boolean).join(' · '),
+  genreIds: movieGenreIds(movie),
+  genre: movie.genre || movieGenreIds(movie).slice(0, 2).map(id => genreNames[id]).filter(Boolean).join(' · '),
   trailerQuery: movie.trailerQuery || `${movie.title} official trailer`
 });
 
@@ -820,9 +821,9 @@ const curatedAssistantTitles=new Set(assistantFallback.map(movie=>movie.title));
 const assistantDirectorHints={
   'Arrival':'Denis Villeneuve','Interstellar':'Christopher Nolan','Her':'Spike Jonze','The Martian':'Ridley Scott','Blade Runner 2049':'Denis Villeneuve','Before Sunrise':'Richard Linklater','Whiplash':'Damien Chazelle','Mad Max: Fury Road':'George Miller','My Neighbor Totoro':'Hayao Miyazaki','Lost in Translation':'Sofia Coppola','Spider-Man: Into the Spider-Verse':'Bob Persichetti Peter Ramsey Rodney Rothman','Cinema Paradiso':'Giuseppe Tornatore','The Pursuit of Happyness':'Gabriele Muccino','Rocky':'John G. Avildsen','La La Land':'Damien Chazelle','About Time':'Richard Curtis','Ex Machina':'Alex Garland','The Social Network':'David Fincher','The Dark Knight':'Christopher Nolan','Inside Out':'Pete Docter','Everything Everywhere All at Once':'Daniel Kwan Daniel Scheinert','The Grand Budapest Hotel':'Wes Anderson','Parasite':'Bong Joon Ho','Your Name':'Makoto Shinkai','Paddington 2':'Paul King','Sing Street':'John Carney','Amélie':'Jean-Pierre Jeunet','Chef':'Jon Favreau','The Secret Life of Walter Mitty':'Ben Stiller','Soul':'Pete Docter','The Intouchables':'Olivier Nakache Éric Toledano','Little Miss Sunshine':'Jonathan Dayton Valerie Faris','Billy Elliot':'Stephen Daldry','Good Will Hunting':'Gus Van Sant','Remember the Titans':'Boaz Yakin','Hidden Figures':'Theodore Melfi','Moneyball':'Bennett Miller',"The King's Speech":'Tom Hooper','School of Rock':'Richard Linklater','Rudy':'David Anspaugh','October Sky':'Joe Johnston','The Truman Show':'Peter Weir','Mission: Impossible - Fallout':'Christopher McQuarrie','The Fabelmans':'Steven Spielberg'
 };
-const defaultAssistantMemory=()=>({items:{},ratings:{},saved:[],watching:[],watched:[],movies:{}});
-const assistantLifecycleOrder={saved:1,watching:2,watched:3,rated:4};
-const assistantLifecycleLabels={saved:'Saved',watching:'Watching',watched:'Watched',rated:'Rated'};
+const defaultAssistantMemory=()=>({items:{},ratings:{},saved:[],watched:[],movies:{}});
+const assistantLifecycleOrder={saved:1,watched:2,rated:3};
+const assistantLifecycleLabels={saved:'Saved',watched:'Watched',rated:'Rated'};
 const normalizeAssistantMemory=rawMemory=>{
   const memory={...defaultAssistantMemory(),...(rawMemory||{})};
   memory.items={...(memory.items||{})};
@@ -834,16 +835,16 @@ const normalizeAssistantMemory=rawMemory=>{
     if(!current||assistantLifecycleOrder[status]>assistantLifecycleOrder[current])memory.items[title]={...(memory.items[title]||{}),status};
   };
   (memory.saved||[]).forEach(title=>promote(title,'saved'));
-  (memory.watching||[]).forEach(title=>promote(title,'watching'));
   (memory.watched||[]).forEach(title=>promote(title,'watched'));
   Object.entries(memory.ratings||{}).forEach(([title,score])=>{if(Number(score)>0)promote(title,'rated');});
   Object.keys(memory.items).forEach(title=>{
     const status=memory.items[title].status;
-    if(!assistantLifecycleOrder[status])delete memory.items[title];
+    if(status==='watching')memory.items[title]={...(memory.items[title]||{}),status:'saved'};
+    if(!assistantLifecycleOrder[memory.items[title]?.status])delete memory.items[title];
   });
   memory.saved=Object.entries(memory.items).filter(([,item])=>item.status==='saved').map(([title])=>title);
-  memory.watching=Object.entries(memory.items).filter(([,item])=>item.status==='watching').map(([title])=>title);
   memory.watched=Object.entries(memory.items).filter(([,item])=>item.status==='watched').map(([title])=>title);
+  delete memory.watching;
   return memory;
 };
 const getAssistantMemory=()=>{
@@ -969,21 +970,19 @@ const updateAssistantMemory=()=>{
   const matches=title=>!query||assistantLibrarySearchText(movies[title]||findAssistantMovieByTitle(title)).includes(query)||String(title).toLowerCase().includes(query);
   const ratings=Object.entries(memory.ratings||{}).filter(([title,score])=>Number(score)>0&&matches(title)).sort((a,b)=>b[1]-a[1]);
   const saved=[...(memory.saved||[])].filter(matches);
-  const watching=[...(memory.watching||[])].filter(matches);
   const watched=[...(memory.watched||[])].filter(matches);
   const allCount=Object.keys(memory.items||{}).length;
   assistantMemory.replaceChildren();
   if(!allCount){assistantMemory.textContent='Save, watch, or rate movies and this library will guide your recommendations.';return;}
-  if(!ratings.length&&!saved.length&&!watching.length&&!watched.length){assistantMemory.textContent='No library items match that search.';return;}
+  if(!ratings.length&&!saved.length&&!watched.length){assistantMemory.textContent='No library items match that search.';return;}
   const favorite=ratings[0]?.[0];
   const summary=document.createElement('p');
   summary.className='taste-memory-summary';
-  summary.textContent=`Library active: ${ratings.length} rated, ${watched.length} watched, ${watching.length} watching, ${saved.length} saved${favorite?`. Strongest taste signal: “${favorite}”.`:'.'}`;
+  summary.textContent=`Library active: ${ratings.length} rated, ${watched.length} watched, ${saved.length} saved${favorite?`. Strongest taste signal: “${favorite}”.`:'.'}`;
   assistantMemory.append(
     summary,
     createMemoryGroup('Rated',ratings.map(([title])=>title),'rated',memory.ratings||{},movies),
     createMemoryGroup('Watched',watched,'watched',memory.ratings||{},movies),
-    createMemoryGroup('Watching',watching,'watching',memory.ratings||{},movies),
     createMemoryGroup('Saved',saved,'saved',memory.ratings||{},movies)
   );
 };
@@ -1250,7 +1249,8 @@ const assistantTimeLabels={short:'under 100 minutes',medium:'100-140 minutes',lo
 const selectedGenreId=answers=>answers.genre==='any'?0:Number(answers.genre||0);
 const movieHasSelectedGenre=(movie,answers)=>{
   const genreId=selectedGenreId(answers);
-  return !genreId||(movie.genreIds||movie.genre_ids||[]).includes(genreId);
+  const genreIds=movieGenreIds(movie);
+  return !genreId||genreIds[0]===genreId;
 };
 const movieHasSelectedAge=(movie,answers)=>answers.age==='any'||movieMatchesAge(movie,answers.age);
 const movieHasSelectedRuntime=(movie,answers)=>answers.time==='any'||movieMatchesTime(movie,answers.time);
@@ -1390,7 +1390,6 @@ const openMovieDetails=async movie=>{
   });
   const actions=document.createElement('div'); actions.className='assistant-actions detail-actions';
   const save=document.createElement('button'); save.type='button'; save.textContent='Save';
-  const watching=document.createElement('button'); watching.type='button'; watching.textContent='Watching';
   const watched=document.createElement('button'); watched.type='button'; watched.textContent='Watched';
   const trailer=document.createElement('button'); trailer.type='button'; trailer.textContent='Trailer';
   const ratingPanel=document.createElement('div'); ratingPanel.className='watched-rating-panel'; ratingPanel.hidden=true;
@@ -1416,17 +1415,15 @@ const openMovieDetails=async movie=>{
     const status=memory.items?.[normalized.title]?.status||'';
     const userRating=Number(memory.ratings?.[normalized.title]||0);
     save.classList.toggle('is-active',status==='saved');
-    watching.classList.toggle('is-active',status==='watching');
     watched.classList.toggle('is-active',status==='watched'||status==='rated');
     ratingPanel.hidden=!(status==='watched'||status==='rated');
     ratingScale.querySelectorAll('button').forEach((button,index)=>button.classList.toggle('is-active',index+1===userRating));
     ratingStatus.textContent=userRating?`Your rating: ${userRating}/10`:'';
   };
   save.addEventListener('click',()=>{const next=getAssistantMemory();const isActive=next.items?.[normalized.title]?.status==='saved';setAssistantMemory(isActive?setAssistantMovieStatus(next,movie,''):setAssistantMovieStatus(next,movie,'saved'));sync();});
-  watching.addEventListener('click',()=>{const next=getAssistantMemory();const isActive=next.items?.[normalized.title]?.status==='watching';setAssistantMemory(isActive?setAssistantMovieStatus(next,movie,''):setAssistantMovieStatus(next,movie,'watching'));sync();});
   watched.addEventListener('click',()=>{const next=getAssistantMemory();const status=next.items?.[normalized.title]?.status;setAssistantMemory(status==='watched'||status==='rated'?setAssistantMovieStatus(next,movie,''):setAssistantMovieStatus(next,movie,'watched'));sync();});
   trailer.addEventListener('click',()=>openTrailer(normalized));
-  actions.append(save,watching,watched,trailer); detail.append(title,meta,storyLabel,overview,ratings,actions,ratingPanel); content.append(detail); message.textContent=''; sync(); trailerDialog.showModal();
+  actions.append(save,watched,trailer); detail.append(title,meta,storyLabel,overview,ratings,actions,ratingPanel); content.append(detail); message.textContent=''; sync(); trailerDialog.showModal();
 };
 const createAssistantCard=rawMovie=>{
   const movie=normalizeMovie(rawMovie);
