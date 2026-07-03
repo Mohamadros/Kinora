@@ -71,8 +71,12 @@
   </div>
 </section>
 
-<section id="about" class="section about-section" style="--section-image:url('{{ "images/cinema-stairway.png" | relURL }}')">
-  <div class="section-shell about-grid"><div>{{ partial "section-heading.html" $about }}</div><div class="about-content reveal">{{ $about.Content }}</div><aside class="author-card reveal"><div class="author-monogram" aria-hidden="true">YN</div><div><span class="card-label">Created by</span><h3>{{ $about.Params.author }}</h3><p>{{ $about.Params.role }}</p><small>{{ $about.Params.university }} · {{ $about.Params.year }}</small></div></aside></div>
+<section id="about" class="section about-section" style="--section-image:url('{{ "images/about-cinema-room.png" | relURL }}')">
+  <div class="section-shell about-grid">
+    <div>{{ partial "section-heading.html" $about }}</div>
+    <figure class="about-image reveal"><img src="{{ "images/about-cinema-room.png" | relURL }}" alt="Cinema screening room with red seats and a film projector"></figure>
+    <div class="about-content reveal">{{ $about.Content }}</div>
+  </div>
 </section>
 
 <template id="movie-card-template"><article class="movie-card"><div class="movie-poster"><img src="" alt="" loading="lazy"><span class="movie-rating"></span></div><div class="movie-copy"><div class="movie-meta"><span class="movie-year"></span><span class="movie-genre"></span></div><h3></h3><p></p><button type="button" class="trailer-button"><span aria-hidden="true">▶</span> Watch trailer</button></div></article></template>

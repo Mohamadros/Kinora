@@ -1,14 +1,10 @@
 +++
-title = "About the Project"
-kicker = "Research through experience"
-intro = "A university project exploring how cinema continues to shape emotion, memory, and culture in an age of constant digital access."
-author = "Your Name"
-role = "Student researcher & designer"
-university = "Your University · Department / Course"
-year = "2026"
+title = "About Kinora"
+kicker = "Cinema, curated"
+intro = "Kinora is a digital cinema space for discovering films, reading thoughtful reviews, exploring upcoming releases, and hearing community voices."
 weight = 60
 +++
 
-This project asks why the theatrical experience still matters when films are available almost everywhere. It combines personal film writing, audience interviews, emotional discovery, and community participation.
+Kinora is built for people who still treat film as an experience: something chosen with mood, watched with attention, and remembered through conversation. It brings movie discovery, release tracking, criticism, interviews, and community reviews into one cinematic space.
 
-The project treats the website as a digital cinema: not simply somewhere to read, but somewhere to choose, feel, remember, and contribute.
+The site is designed like a quiet film archive rather than a noisy feed. You can search for the right movie, follow upcoming releases, read deeper reflections, and browse what other viewers are watching and saying.

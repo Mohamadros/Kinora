@@ -5,10 +5,8 @@ enableRobotsTXT = true
 
 [params]
   description = "Discover films through emotion, explore upcoming releases, and join a living conversation about cinema culture in the digital age."
-  author = "Your Name"
-  university = "Your University"
   heroImage = "images/hero-red-curtain.jpg"
-  brandLogo = "images/kinora-logo.png"
+  brandLogo = "images/kinora-mark.png"
   accentColor = "#d4af37"
   # Add a TMDB API Read Access Token here. For a production site, prefer a
   # serverless proxy so the token is not exposed in the browser source.
