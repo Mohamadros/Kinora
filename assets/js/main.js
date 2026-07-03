@@ -43,6 +43,33 @@ navDropdown?.addEventListener('pointerleave',()=>{if(supportsHoverDropdown())clo
 navDropdown?.querySelectorAll('a').forEach(link=>link.addEventListener('click',()=>{closeNavDropdown();closeNav();}));
 document.addEventListener('click',event=>{if(navDropdown&&!navDropdown.contains(event.target))closeNavDropdown();});
 window.addEventListener('scroll', () => header?.classList.toggle('is-scrolled', scrollY > 40), { passive: true });
+const headerScrollOffset=()=>Math.ceil((header?.getBoundingClientRect().height||78)+8);
+const scrollToHashTarget=(hash,{behavior='smooth',updateHistory=false}={})=>{
+  if(!hash||hash==='#')return false;
+  const target=document.getElementById(decodeURIComponent(hash.slice(1)));
+  if(!target)return false;
+  const top=Math.max(0,target.getBoundingClientRect().top+scrollY-headerScrollOffset());
+  scrollTo({top,behavior});
+  if(updateHistory&&location.hash!==hash)history.pushState(null,'',hash);
+  return true;
+};
+const samePageHashFromLink=link=>{
+  try{
+    const url=new URL(link.href,location.href);
+    return url.origin===location.origin&&url.pathname===location.pathname?url.hash:'';
+  }catch{return '';}
+};
+document.querySelectorAll('a[href*="#"]').forEach(link=>link.addEventListener('click',event=>{
+  const hash=samePageHashFromLink(link);
+  if(!hash)return;
+  event.preventDefault();
+  closeNavDropdown();
+  closeNav();
+  scrollToHashTarget(hash,{updateHistory:true});
+}));
+const correctHashScroll=()=>{if(location.hash)requestAnimationFrame(()=>scrollToHashTarget(location.hash,{behavior:'auto'}));};
+window.addEventListener('load',()=>{correctHashScroll();setTimeout(correctHashScroll,180);});
+window.addEventListener('hashchange',()=>setTimeout(correctHashScroll,0));
 const focusMovieMatchInput=()=>{
   if(location.hash!=='#mood-finder')return;
   const input=document.querySelector('[data-decision-form] select,[data-decision-form] input,[data-decision-form] button');
