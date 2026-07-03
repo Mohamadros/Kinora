@@ -1148,7 +1148,7 @@ const movieMatchesMood=(movie,answers)=>{
   return moods.includes(answers.targetMood)||moodTransitionScore(movie,answers)>=8;
 };
 const inferAssistantMoods=movie=>{
-  const genreIds=movie.genreIds||movie.genre_ids||[];
+  const genreIds=movieGenreIds(movie);
   const text=`${movie.title||''} ${movie.overview||''} ${movie.genre||''}`.toLowerCase();
   const moods=new Set();
   if(genreIds.includes(35)||genreIds.includes(16)||genreIds.includes(10751))moods.add('happy').add('relaxed');
@@ -1239,7 +1239,7 @@ const runtimePreferenceScore=(movie,time)=>{
 };
 const genrePreferenceScore=(movie,genre)=>{
   if(genre==='any')return 0;
-  const genreIds=movie.genreIds||movie.genre_ids||[];
+  const genreIds=movieGenreIds(movie);
   return genreIds.includes(Number(genre))?10:-3;
 };
 const platformPreferenceScore=(movie,platform)=>normalizePlatform(platform)?(movieMatchesPlatform(movie,platform)?8:-4):0;
@@ -1254,8 +1254,10 @@ const movieHasSelectedGenre=(movie,answers)=>{
 };
 const movieHasSelectedAge=(movie,answers)=>answers.age==='any'||movieMatchesAge(movie,answers.age);
 const movieHasSelectedRuntime=(movie,answers)=>answers.time==='any'||movieMatchesTime(movie,answers.time);
-const movieHasRequiredLibraryStatus=(movie,answers,memory)=>{
-  if(normalizePlatform(answers.platform)!=='library')return true;
+const movieHasSelectedPlatform=(movie,answers,memory)=>{
+  const platform=normalizePlatform(answers.platform);
+  if(!platform)return true;
+  if(platform!=='library')return movieMatchesPlatform(movie,answers.platform);
   const title=normalizeMovie(movie).title;
   return Boolean(memory.items?.[title]||memory.movies?.[title]);
 };
@@ -1265,8 +1267,15 @@ const strictAssistantCandidate=(movie,answers,memory)=>{
   if(!movieHasSelectedGenre(normalized,answers))return false;
   if(!movieHasSelectedAge(normalized,answers))return false;
   if(!movieHasSelectedRuntime({...normalized,runtime:movie.runtime},answers))return false;
-  if(!movieHasRequiredLibraryStatus(normalized,answers,memory))return false;
+  if(!movieHasSelectedPlatform(movie,answers,memory))return false;
   return true;
+};
+const validateAssistantPool=(movies,answers,memory)=>{
+  const valid=movies.filter(movie=>strictAssistantCandidate(movie,answers,memory));
+  if(valid.length!==movies.length){
+    console.warn('Movie Match removed results that failed strict filters.',{answers,removed:movies.filter(movie=>!valid.includes(movie)).map(movie=>normalizeMovie(movie).title)});
+  }
+  return valid;
 };
 const scoreAssistantMovieDetailed=(movie,answers,memory)=>{
   const normalized=normalizeMovie(movie);
@@ -1428,6 +1437,11 @@ const openMovieDetails=async movie=>{
 const createAssistantCard=rawMovie=>{
   const movie=normalizeMovie(rawMovie);
   const poster=document.createElement('button'); poster.type='button'; poster.className='wall-poster'; poster.setAttribute('aria-label',`View details for ${movie.title}`);
+  poster.dataset.title=movie.title;
+  poster.dataset.year=movie.year;
+  poster.dataset.genres=movie.genreIds.join(' ');
+  poster.dataset.platforms=(rawMovie.platforms||[]).join(' ');
+  poster.dataset.runtime=String(rawMovie.runtime||0);
   const image=document.createElement('img'); image.src=movie.poster||assistantPosterImage(movie.title); image.alt=`Poster for ${movie.title}`; image.loading='eager'; image.decoding='async'; image.addEventListener('error',()=>{image.src=assistantPosterFallback(movie.title)},{once:true});
   const reason=rawMovie.assistantReason||'Recommended for your selected filters.';
   const overlay=document.createElement('span'); overlay.className='wall-poster-overlay'; overlay.innerHTML=`<strong>${movie.title}</strong><small>${escapeHTML(reason)}</small>`;
@@ -1436,26 +1450,7 @@ const createAssistantCard=rawMovie=>{
 };
 let assistantRenderRequest=0;
 let assistantVariant=0;
-let lastAssistantSignature='';
 let lastAssistantFilterSignature='';
-let recentAssistantTitles=[];
-const shuffledMovies=(movies,variant=0)=>movies.map((movie,index)=>({movie,sort:Math.random()+((variant%11)*0.0001)+(index*0.00001)})).sort((a,b)=>a.sort-b.sort).map(item=>item.movie);
-const selectAssistantMovies=(exactRanked,closeRanked,{different=false}={})=>{
-  const recent=new Set(recentAssistantTitles);
-  const enoughFresh=[...exactRanked,...closeRanked].filter(movie=>!recent.has(normalizeMovie(movie).title)).length>=5;
-  const avoidRecent=movie=>!enoughFresh||!recent.has(normalizeMovie(movie).title);
-  const exactPool=(different?shuffledMovies(exactRanked,assistantVariant):exactRanked).filter(avoidRecent);
-  const closePool=(different?shuffledMovies(closeRanked,assistantVariant+3):closeRanked).filter(avoidRecent);
-  let selection=[...exactPool.slice(0,5),...closePool].slice(0,5);
-  const combined=[...exactRanked,...closeRanked];
-  if(selection.length<5)selection=[...selection,...shuffledMovies(combined,assistantVariant+5).filter(movie=>!selection.some(selected=>normalizeMovie(selected).title===normalizeMovie(movie).title))].slice(0,5);
-  for(let attempt=0;attempt<6&&combined.length>5&&selection.map(movie=>normalizeMovie(movie).title).join('|')===lastAssistantSignature;attempt++){
-    selection=shuffledMovies(combined,assistantVariant+attempt+7).slice(0,5);
-  }
-  lastAssistantSignature=selection.map(movie=>normalizeMovie(movie).title).join('|');
-  recentAssistantTitles=[...selection.map(movie=>normalizeMovie(movie).title),...recentAssistantTitles].slice(0,25);
-  return selection;
-};
 const uniqueAssistantMovies=movies=>{
   const seen=new Set();
   return movies.filter(movie=>{
@@ -1472,7 +1467,7 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
     .map(movie=>scoreAssistantMovieDetailed(movie,answers,memory))
     .sort((a,b)=>b.score-a.score);
   const offset=different&&ranked.length>5?(assistantVariant%Math.max(1,ranked.length-4)):0;
-  const pool=ranked.slice(offset,offset+5).map(item=>item.movie);
+  const pool=validateAssistantPool(ranked.slice(offset,offset+5).map(item=>item.movie),answers,memory);
   const bestScore=ranked[0]?.score||0;
   const fifthScore=ranked[4]?.score||0;
   return {pool:pool.slice(0,5),exactEnough:pool.length>=3&&bestScore>28&&fifthScore>18,ranked};
