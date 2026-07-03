@@ -62,10 +62,14 @@ const sectionObserver = new IntersectionObserver(entries => entries.forEach(entr
 }), { rootMargin: '-25% 0px -65% 0px' });
 document.querySelectorAll('main section[id]').forEach(section => sectionObserver.observe(section));
 
+const tmdbUrl = (path, params = {}) => {
+  const url = new URL(`${apiBase}${path}`);
+  Object.entries(params).forEach(([key, value]) => value !== '' && value !== undefined && value !== null && url.searchParams.set(key, value));
+  return url;
+};
 const tmdb = async (path, params = {}) => {
   if (!token) throw new Error('TMDB token not configured');
-  const url = new URL(`${apiBase}${path}`);
-  Object.entries(params).forEach(([key, value]) => value !== '' && url.searchParams.set(key, value));
+  const url = tmdbUrl(path, params);
   const response = await fetch(url, { headers: { Authorization: `Bearer ${token}`, accept: 'application/json' } });
   if (!response.ok) throw new Error(`TMDB request failed: ${response.status}`);
   return response.json();
@@ -1173,6 +1177,7 @@ const inferAssistantMoods=movie=>{
 };
 const enrichAssistantMovie=(rawMovie,platform='')=>{
   const movie=normalizeMovie(rawMovie);
+  movie.poster_path=rawMovie.poster_path||rawMovie.posterPath||'';
   movie.moods=rawMovie.moods&&rawMovie.moods.length?rawMovie.moods:inferAssistantMoods(movie);
   movie.runtime=rawMovie.runtime||movie.runtime||0;
   movie.platforms=platform?[platform]:(rawMovie.platforms||(rawMovie.platform?[rawMovie.platform]:[]));
@@ -1246,6 +1251,13 @@ const platformPreferenceScore=(movie,platform)=>normalizePlatform(platform)?(mov
 const releasePreferenceScore=(movie,age)=>age==='any'?0:(movieMatchesAge(movie,age)?7:-4);
 const assistantAgeLabels={old:'older classic',modern:'modern classic',new:'newer movie'};
 const assistantTimeLabels={short:'under 100 minutes',medium:'100-140 minutes',long:'over 140 minutes'};
+const assistantDiscoverMaxPages=50;
+const assistantDiscoverBatchSize=5;
+const assistantDebug=(label,payload={})=>{
+  const message=`Movie Match ${label}: ${JSON.stringify(payload)}`;
+  console.log(message);
+  window.movieMatchDebug=[...(window.movieMatchDebug||[]),{label,payload,recordedAt:new Date().toISOString()}].slice(-80);
+};
 const selectedGenreId=answers=>answers.genre==='any'?0:Number(answers.genre||0);
 const movieHasSelectedGenre=(movie,answers)=>{
   const genreId=selectedGenreId(answers);
@@ -1273,14 +1285,14 @@ const strictAssistantCandidate=(movie,answers,memory)=>{
 const validateAssistantPool=(movies,answers,memory)=>{
   const valid=movies.filter(movie=>strictAssistantCandidate(movie,answers,memory));
   if(valid.length!==movies.length){
-    console.warn('Movie Match removed results that failed strict filters.',{answers,removed:movies.filter(movie=>!valid.includes(movie)).map(movie=>normalizeMovie(movie).title)});
+    assistantDebug('removed invalid results',{answers,removed:movies.filter(movie=>!valid.includes(movie)).map(movie=>normalizeMovie(movie).title)});
   }
   return valid;
 };
 const scoreAssistantMovieDetailed=(movie,answers,memory)=>{
   const normalized=normalizeMovie(movie);
   const reasons=[];
-  let score=Number(normalized.rating||movie.vote_average||0)*1.4;
+  let score=Number(normalized.rating||movie.vote_average||0)*1.4+Math.min(Number(movie.popularity||0),100)*.12;
   if(curatedAssistantTitles.has(normalized.title))score+=14;
   const genreId=selectedGenreId(answers);
   if(genreId){
@@ -1333,7 +1345,7 @@ const closestAssistantExplanation=(answers,movies)=>{
 const fetchAssistantMovies=async answers=>{
   if(!token)throw new Error('TMDB token not configured');
   const sortOptions=['vote_average.desc','popularity.desc','primary_release_date.desc'];
-  const params={include_adult:'false',sort_by:sortOptions[assistantVariant%sortOptions.length],'vote_count.gte':'80'};
+  const params={include_adult:'false',sort_by:sortOptions[assistantVariant%sortOptions.length],'vote_count.gte':'20'};
   const genreId=selectedGenreId(answers);
   if(genreId)params.with_genres=String(genreId);
   params['primary_release_date.lte']=new Date().toISOString().slice(0,10);
@@ -1345,24 +1357,37 @@ const fetchAssistantMovies=async answers=>{
   if(answers.time==='long')params['with_runtime.gte']='141';
   const provider=providerMap[normalizePlatform(answers.platform)];
   if(provider){params.with_watch_providers=provider;params.watch_region='US';}
-  const pages=[1,2,3,4,5,6];
-  const responses=await Promise.all(pages.map(page=>tmdb('/discover/movie',{...params,page:String(page)}).catch(()=>({results:[]}))));
+  assistantDebug('TMDb token available',{available:Boolean(token)});
+  const firstParams={...params,page:'1'};
+  assistantDebug('TMDb request URL',{url:tmdbUrl('/discover/movie',firstParams).toString()});
+  const first=await tmdb('/discover/movie',firstParams).catch(error=>{
+    console.warn('Movie Match TMDb first page failed:',error);
+    return {results:[],total_pages:0,total_results:0};
+  });
+  const maxPages=Math.min(Number(first.total_pages)||1,assistantDiscoverMaxPages);
+  const pages=Array.from({length:Math.max(0,maxPages-1)},(_,index)=>index+2);
+  const responses=[first];
+  for(let index=0;index<pages.length;index+=assistantDiscoverBatchSize){
+    const batch=pages.slice(index,index+assistantDiscoverBatchSize);
+    assistantDebug('TMDb request URLs',{urls:batch.map(page=>tmdbUrl('/discover/movie',{...params,page:String(page)}).toString())});
+    const batchResponses=await Promise.all(batch.map(page=>tmdb('/discover/movie',{...params,page:String(page)}).catch(error=>{
+      console.warn('Movie Match TMDb page failed:',{page,error});
+      return {results:[]};
+    })));
+    responses.push(...batchResponses);
+  }
   const seen=new Set();
   const discovered=responses.flatMap(data=>data.results||[])
-    .filter(movie=>movie.poster_path)
     .filter(movie=>{
       const key=movie.id||movie.title;
       if(seen.has(key))return false;
       seen.add(key);
       return true;
     });
-  const detailed=await Promise.all(discovered.slice(0,36).map(async movie=>{
-    try{
-      const details=await tmdb(`/movie/${movie.id}`);
-      return {...movie,...details,genre_ids:movie.genre_ids||details.genres?.map(genre=>genre.id)||[],platforms:provider?[answers.platform]:[]};
-    }catch{return movie;}
-  }));
-  return detailed.map(movie=>enrichAssistantMovie(movie,provider?answers.platform:''));
+  assistantDebug('TMDb fetched movies',{pages:responses.length,totalResults:first.total_results||discovered.length,uniqueFetched:discovered.length});
+  const selectedPlatform=normalizePlatform(answers.platform);
+  const platformLabel=selectedPlatform&&selectedPlatform!=='library'?answers.platform:'';
+  return discovered.map(movie=>enrichAssistantMovie(movie,platformLabel));
 };
 const openMovieDetails=async movie=>{
   const normalized=normalizeMovie(movie);
@@ -1461,8 +1486,9 @@ const uniqueAssistantMovies=movies=>{
   });
 };
 const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
-  const source=uniqueAssistantMovies([...(candidates.length?candidates:[]),...assistantFallback]);
+  const source=uniqueAssistantMovies(candidates.length?candidates:assistantFallback);
   const strictSource=source.filter(movie=>strictAssistantCandidate(movie,answers,memory));
+  assistantDebug('candidates after strict filtering',{sourceCount:source.length,filteredCount:strictSource.length,usingFallback:!candidates.length,answers});
   const ranked=strictSource
     .map(movie=>scoreAssistantMovieDetailed(movie,answers,memory))
     .sort((a,b)=>b.score-a.score);
@@ -1474,6 +1500,13 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
 };
 const renderPosterWall=movies=>{
   assistantResults.innerHTML='';
+  assistantDebug('rendered results',{results:movies.map(movie=>({
+    title:normalizeMovie(movie).title,
+    poster_path:movie.poster_path||'',
+    posterUrl:normalizeMovie(movie).poster,
+    genres:movieGenreIds(movie),
+    year:normalizeMovie(movie).year
+  }))});
   movies.forEach(movie=>assistantResults.appendChild(createAssistantCard(movie)));
 };
 const updateMovieWall=async ({scroll=false,different=false}={})=>{
@@ -1485,30 +1518,33 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   if(different||filtersChanged)assistantVariant++;
   lastAssistantFilterSignature=filterSignature;
   assistantPanel.hidden=false; assistantPanel.classList.add('is-visible');
-  if(!token||!assistantResults.children.length){
+  if(!token){
     const local={...getAssistantMoviePool(assistantFallback,answers,memory,{different}),source:assistantFallback};
     renderPosterWall(local.pool);
     assistantReason.textContent=local.exactEnough?assistantExplanation(answers,local.pool.map(normalizeMovie)):closestAssistantExplanation(answers,local.pool.map(normalizeMovie));
     console.log('Assistant filters changed:', answers);
     console.log('New movie results:', local.pool);
   }else{
+    assistantResults.replaceChildren();
     assistantReason.textContent='Finding a fresh set of movie posters from the live catalogue…';
   }
   try{
     let candidates;
-    try{candidates=await fetchAssistantMovies(answers);}catch{candidates=assistantFallback;}
-    if(requestId!==assistantRenderRequest)return;
-    const fallbackForCurrentFilters=assistantFallback;
-    if(!candidates.length)candidates=fallbackForCurrentFilters;
-    if(candidates.length<5){
-      const seen=new Set(candidates.map(movie=>normalizeMovie(movie).title));
-      candidates=[...candidates,...fallbackForCurrentFilters.filter(movie=>!seen.has(movie.title))];
+    let usingFallback=false;
+    try{candidates=await fetchAssistantMovies(answers);}catch(error){
+      console.warn('Movie Match TMDb failed, using fallback:',error);
+      candidates=assistantFallback;
+      usingFallback=true;
     }
-    const candidateTitles=new Set(candidates.map(movie=>normalizeMovie(movie).title));
-    candidates=[...candidates,...fallbackForCurrentFilters.filter(movie=>!candidateTitles.has(movie.title))];
+    if(requestId!==assistantRenderRequest)return;
+    if(!candidates.length){
+      console.warn('Movie Match TMDb returned no candidates, using fallback.');
+      candidates=assistantFallback;
+      usingFallback=true;
+    }
     const {pool,exactEnough}=getAssistantMoviePool(candidates,answers,memory,{different});
     renderPosterWall(pool);
-    assistantReason.textContent=pool.length?(exactEnough?assistantExplanation(answers,pool.map(normalizeMovie)):closestAssistantExplanation(answers,pool.map(normalizeMovie))):`No strong ${answers.platform} matches found for these filters. Try another genre, age, or platform.`;
+    assistantReason.textContent=pool.length?(exactEnough&&!usingFallback?assistantExplanation(answers,pool.map(normalizeMovie)):closestAssistantExplanation(answers,pool.map(normalizeMovie))):`No strong ${answers.platform} matches found for these filters. Try another genre, age, or platform.`;
   }catch(error){
     if(requestId!==assistantRenderRequest)return;
     const fallbackForCurrentFilters=assistantFallback;
