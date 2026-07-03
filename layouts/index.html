@@ -2,6 +2,8 @@
 {{ $mood := site.GetPage "/mood-finder" }}
 {{ $coming := site.GetPage "/coming-soon" }}
 {{ $about := site.GetPage "/about" }}
+{{ $journal := site.GetPage "/journal" }}
+{{ $latestReview := index ($journal.RegularPages.ByDate.Reverse) 0 }}
 
 <section id="home" class="hero" aria-labelledby="hero-title" style="--hero-image:url('{{ .Params.hero_image | relURL }}')">
   <div class="hero-shade"></div>
@@ -17,6 +19,12 @@
 
 <section class="cinema-intro" aria-label="Exhibition introduction">
   <div class="intro-copy reveal">{{ .Content }}</div>
+  {{ with $latestReview }}
+  <aside class="latest-review-alert reveal" aria-label="Latest Blog Review">
+    <div><span>Latest Blog Review</span><p><strong>{{ .Title }}</strong>{{ with .Params.hook }} - {{ . }}{{ end }}</p></div>
+    <div class="latest-review-meta"><a href="{{ .RelPermalink }}">Read review</a></div>
+  </aside>
+  {{ end }}
   <div class="marquee" aria-hidden="true"><div>Cinema remembers us · Cinema moves us · Cinema connects us ·&nbsp;</div><div>Cinema remembers us · Cinema moves us · Cinema connects us ·&nbsp;</div></div>
 </section>
 

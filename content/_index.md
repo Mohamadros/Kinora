@@ -1,6 +1,6 @@
 ---
 title: "Home"
-description: "Exploring cinema, emotions, and movie culture in a digital world"
+description: "Discover films through mood-based recommendations, upcoming releases, thoughtful reviews, and community voices."
 hero_image: "images/hero-red-curtain.jpg"
 eyebrow: "An interactive cinema experience"
 cta_label: "Search"
