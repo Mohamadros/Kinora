@@ -10,6 +10,8 @@
 <meta property="og:image" content="{{ site.Params.heroImage | absURL }}">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="tmdb-token" content="{{ site.Params.tmdbToken }}">
+<meta name="supabase-url" content="{{ site.Params.supabaseUrl }}">
+<meta name="supabase-anon-key" content="{{ site.Params.supabaseAnonKey }}">
 <link rel="canonical" href="{{ .Permalink }}">
 <title>{{ if .IsHome }}{{ site.Title }}{{ else }}{{ .Title }} · {{ site.Title }}{{ end }}</title>
 {{ $css := resources.Get "css/main.css" | minify | fingerprint }}

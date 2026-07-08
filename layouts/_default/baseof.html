@@ -7,6 +7,7 @@
     <main id="main">{{ block "main" . }}{{ end }}</main>
     {{ partial "footer.html" . }}
     <div class="grain" aria-hidden="true"></div>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
     {{ $js := resources.Get "js/main.js" | minify | fingerprint }}
     <script src="{{ $js.RelPermalink }}" integrity="{{ $js.Data.Integrity }}" defer></script>
   </body>

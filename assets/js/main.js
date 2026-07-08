@@ -9,10 +9,105 @@ const nav = document.querySelector('.primary-nav');
 const navDropdown = document.querySelector('[data-nav-dropdown]');
 const navDropdownToggle = document.querySelector('[data-nav-dropdown-toggle]');
 const token = document.querySelector('meta[name="tmdb-token"]')?.content.trim() || '';
+const supabaseUrl = document.querySelector('meta[name="supabase-url"]')?.content.trim() || '';
+const supabaseAnonKey = document.querySelector('meta[name="supabase-anon-key"]')?.content.trim() || '';
+const supabaseClient = supabaseUrl && supabaseAnonKey && window.supabase ? window.supabase.createClient(supabaseUrl, supabaseAnonKey) : null;
 const siteRoot = document.body?.dataset.siteRoot || '/';
 const apiBase = 'https://api.themoviedb.org/3';
 const imageBase = 'https://image.tmdb.org/t/p/w500';
 let genreNames = { 12: 'Adventure', 16: 'Animation', 18: 'Drama', 27: 'Horror', 28: 'Action', 35: 'Comedy', 36: 'History', 53: 'Thriller', 80: 'Crime', 99: 'Documentary', 10749: 'Romance', 10751: 'Family', 878: 'Science Fiction' };
+const authOpenButton=document.querySelector('[data-auth-open]');
+const authUserButton=document.querySelector('[data-auth-user]');
+const authLogoutButton=document.querySelector('[data-auth-logout]');
+const authDialog=document.querySelector('[data-auth-dialog]');
+const authForm=document.querySelector('[data-auth-form]');
+const authMessage=document.querySelector('[data-auth-message]');
+let kinoraSession=null;
+let kinoraProfile=null;
+let kinoraLibraryReady=false;
+const isSupabaseReady=()=>Boolean(supabaseClient);
+const currentUserId=()=>kinoraSession?.user?.id||'';
+const displayAuthMessage=message=>{if(authMessage)authMessage.textContent=message;};
+const openAuthDialog=message=>{
+  displayAuthMessage(message||'');
+  if(authDialog&&typeof authDialog.showModal==='function')authDialog.showModal();
+  else alert(message||'Please log in to continue.');
+};
+const requireKinoraAuth=message=>{
+  if(currentUserId())return true;
+  openAuthDialog(message||'Please log in to save this to your Kinora library.');
+  return false;
+};
+const authDisplayName=()=>kinoraProfile?.display_name||kinoraProfile?.username||kinoraSession?.user?.email||'Kinora user';
+const updateAuthUI=()=>{
+  const signedIn=Boolean(currentUserId());
+  if(authOpenButton)authOpenButton.hidden=signedIn;
+  if(authUserButton){authUserButton.hidden=!signedIn;authUserButton.textContent=signedIn?authDisplayName():'';}
+  if(authLogoutButton)authLogoutButton.hidden=!signedIn;
+};
+const fetchKinoraProfile=async ()=>{
+  if(!supabaseClient||!currentUserId())return null;
+  const {data,error}=await supabaseClient.from('profiles').select('*').eq('id',currentUserId()).maybeSingle();
+  if(error){console.warn('Kinora profile load failed',error);return null;}
+  kinoraProfile=data;
+  updateAuthUI();
+  return data;
+};
+const upsertKinoraProfile=async ({username='',displayName=''}={})=>{
+  if(!supabaseClient||!currentUserId())return;
+  const payload={id:currentUserId(),username:username||null,display_name:displayName||username||kinoraSession?.user?.email||null};
+  const {error}=await supabaseClient.from('profiles').upsert(payload,{onConflict:'id'});
+  if(error)console.warn('Kinora profile save failed',error);
+  await fetchKinoraProfile();
+};
+const setupAuth=async ()=>{
+  if(!supabaseClient){
+    updateAuthUI();
+    return;
+  }
+  const {data}=await supabaseClient.auth.getSession();
+  kinoraSession=data.session;
+  if(kinoraSession)await fetchKinoraProfile();
+  updateAuthUI();
+  supabaseClient.auth.onAuthStateChange(async (_event,session)=>{
+    kinoraSession=session;
+    kinoraLibraryReady=false;
+    if(session)await fetchKinoraProfile();
+    updateAuthUI();
+    document.dispatchEvent(new CustomEvent('kinora-auth-change'));
+  });
+};
+authOpenButton?.addEventListener('click',()=>openAuthDialog());
+authUserButton?.addEventListener('click',()=>openAuthDialog('You are logged in. Profile editing fields update your public name on sign up.'));
+document.querySelector('[data-auth-close]')?.addEventListener('click',()=>authDialog?.close());
+authLogoutButton?.addEventListener('click',async()=>{
+  if(!supabaseClient)return;
+  await supabaseClient.auth.signOut();
+  kinoraSession=null;kinoraProfile=null;kinoraLibraryReady=false;updateAuthUI();
+});
+authForm?.addEventListener('submit',async event=>{
+  event.preventDefault();
+  if(!supabaseClient){displayAuthMessage('Add Supabase URL and anon key in hugo.toml first.');return;}
+  const submitter=event.submitter;
+  const action=submitter?.dataset.authAction||'login';
+  const formData=new FormData(authForm);
+  const email=String(formData.get('email')||'').trim();
+  const password=String(formData.get('password')||'');
+  const username=String(formData.get('username')||'').trim();
+  const displayName=String(formData.get('displayName')||'').trim();
+  displayAuthMessage(action==='signup'?'Creating your account…':'Logging in…');
+  const response=action==='signup'
+    ? await supabaseClient.auth.signUp({email,password,options:{data:{username,display_name:displayName}}})
+    : await supabaseClient.auth.signInWithPassword({email,password});
+  if(response.error){displayAuthMessage(response.error.message);return;}
+  kinoraSession=response.data.session||kinoraSession;
+  if(kinoraSession)await upsertKinoraProfile({username,displayName});
+  displayAuthMessage(action==='signup'&&!response.data.session?'Check your email to confirm your Kinora account.':'You are logged in.');
+  updateAuthUI();
+  setTimeout(()=>authDialog?.close(),700);
+  document.dispatchEvent(new CustomEvent('kinora-auth-change'));
+});
+setupAuth();
 
 const closeNav = () => {
   toggle?.setAttribute('aria-expanded', 'false');
@@ -297,6 +392,35 @@ const radarCreditsCache=new Map();
 const fillGenres = genres => { genres.forEach(genre => { const option=document.createElement('option'); option.value=genre.id; option.textContent=genre.name; genreFilter?.append(option); }); };
 const getRadarStore=key=>{try{return JSON.parse(localStorage.getItem(key)||'[]');}catch{return [];}};
 const setRadarStore=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value));}catch{}};
+const saveSupabaseReminder=async movie=>{
+  if(!requireKinoraAuth('Please log in to save release reminders.'))return false;
+  if(!supabaseClient)return false;
+  const normalized=normalizeRadarMovie(movie);
+  const payload={
+    user_id:currentUserId(),
+    tmdb_id:normalized.id||normalized.tmdbId||null,
+    movie_title:normalized.title,
+    poster_url:normalized.poster||null,
+    poster_path:movie.poster_path||null,
+    release_date:normalized.releaseDate||normalized.release_date||null,
+    reminder_status:'active',
+    reminder_sent:false
+  };
+  const {error}=await supabaseClient.from('upcoming_movie_reminders').upsert(payload,{onConflict:payload.tmdb_id?'user_id,tmdb_id':'user_id,movie_title,release_date'});
+  if(error){console.warn('Release reminder save failed',error);return false;}
+  const next=new Set(getRadarStore(radarWatchlistKey));
+  next.add(normalized.title);
+  setRadarStore(radarWatchlistKey,[...next]);
+  return true;
+};
+const loadSupabaseReminders=async ()=>{
+  if(!supabaseClient||!currentUserId())return;
+  const {data,error}=await supabaseClient.from('upcoming_movie_reminders').select('*').eq('user_id',currentUserId()).eq('reminder_status','active');
+  if(error){console.warn('Release reminders load failed',error);return;}
+  setRadarStore(radarWatchlistKey,(data||[]).map(item=>item.movie_title).filter(Boolean));
+  renderRadarLists();
+  if(comingMovies.length)showComing(filterRadarMovies(comingMovies));
+};
 const radarMovieByTitle=title=>comingMovies.map(normalizeRadarMovie).find(movie=>movie.title===title);
 const renderRadarLists=()=>{
   if(!radarLists)return;
@@ -470,15 +594,25 @@ const createRadarCard=rawMovie=>{
   const actions=document.createElement('div');
   actions.className='radar-actions';
   const watch=document.createElement('button');
-  watch.type='button'; watch.className='watchlist-button'; watch.textContent=watchlist.has(movie.title)?'In Watchlist':'Add to Watchlist';
-  watch.addEventListener('click',()=>{
+  watch.type='button'; watch.className='watchlist-button'; watch.textContent=watchlist.has(movie.title)?'Reminder saved':'Save release reminder';
+  watch.addEventListener('click',async()=>{
+    if(!currentUserId()){
+      requireKinoraAuth('Please log in to save release reminders.');
+      return;
+    }
+    if(await saveSupabaseReminder(movie)){
+      watch.textContent='Reminder saved';
+      watch.classList.add('is-active');
+      renderRadarLists();
+      return;
+    }
     const next=new Set(getRadarStore(radarWatchlistKey));
     next.has(movie.title)?next.delete(movie.title):next.add(movie.title);
     setRadarStore(radarWatchlistKey,[...next]);
     if(next.has(movie.title)){
       setRadarStore(radarHiddenKey,getRadarStore(radarHiddenKey).filter(title=>title!==movie.title));
     }
-    watch.textContent=next.has(movie.title)?'In Watchlist':'Add to Watchlist';
+    watch.textContent=next.has(movie.title)?'Reminder saved':'Save release reminder';
     watch.classList.toggle('is-active',next.has(movie.title));
     renderRadarLists();
   });
@@ -894,6 +1028,69 @@ const getAssistantMemory=()=>{
   try{return normalizeAssistantMemory(JSON.parse(localStorage.getItem(assistantStorageKey)||'{}'));}
   catch{return defaultAssistantMemory();}
 };
+const assistantMemoryFromRows=rows=>{
+  const memory=defaultAssistantMemory();
+  (rows||[]).forEach(row=>{
+    const title=row.title;
+    if(!title)return;
+    const status=row.status||'saved';
+    memory.items[title]={status};
+    if(status==='rated'&&Number(row.rating)>0)memory.ratings[title]=Number(row.rating);
+    memory.movies[title]={
+      title,
+      year:row.release_year||'TBA',
+      rating:Number(row.rating)||0,
+      genre:(row.genre_names||[]).join(' · '),
+      genreIds:row.genres||[],
+      director:'',
+      moods:row.mood_tags||[],
+      platforms:row.platform?[row.platform]:[],
+      runtime:row.runtime||0,
+      overview:row.overview||'Saved in your Kinora library.',
+      poster:row.poster_url||communityPosterFromPath(row.poster_path,title),
+      trailerQuery:`${title} official trailer`,
+      tmdbId:row.tmdb_id
+    };
+  });
+  return normalizeAssistantMemory(memory);
+};
+const loadSupabaseLibrary=async ()=>{
+  if(!supabaseClient||!currentUserId())return;
+  const {data,error}=await supabaseClient.from('movie_library').select('*').eq('user_id',currentUserId()).order('updated_at',{ascending:false});
+  if(error){console.warn('Kinora library load failed',error);return;}
+  try{localStorage.setItem(assistantStorageKey,JSON.stringify(assistantMemoryFromRows(data)));}catch{}
+  kinoraLibraryReady=true;
+  updateAssistantMemory();
+};
+const upsertSupabaseLibraryMovie=async (movie,status,rating=0)=>{
+  if(!supabaseClient||!currentUserId()||!status)return;
+  const normalized=normalizeMovie(movie);
+  const snapshot=assistantMovieSnapshot(movie);
+  const payload={
+    user_id:currentUserId(),
+    tmdb_id:normalized.id||movie.tmdbId||movie.id||null,
+    title:normalized.title,
+    release_year:Number(normalized.year)||null,
+    poster_url:normalized.poster||snapshot.poster||null,
+    poster_path:movie.poster_path||null,
+    status,
+    rating:status==='rated'?Number(rating)||null:null,
+    genres:normalized.genreIds||snapshot.genreIds||[],
+    genre_names:String(normalized.genre||snapshot.genre||'').split(' · ').filter(Boolean),
+    mood_tags:snapshot.moods||[],
+    runtime:Number(movie.runtime||snapshot.runtime||0)||null,
+    overview:normalized.overview||snapshot.overview||null,
+    platform:(snapshot.platforms||[])[0]||null
+  };
+  const conflict=payload.tmdb_id?'user_id,tmdb_id':'user_id,title,release_year';
+  const {error}=await supabaseClient.from('movie_library').upsert(payload,{onConflict:conflict});
+  if(error)console.warn('Kinora library save failed',error);
+};
+const deleteSupabaseLibraryMovie=async title=>{
+  if(!supabaseClient||!currentUserId())return;
+  const {error}=await supabaseClient.from('movie_library').delete().eq('user_id',currentUserId()).eq('title',title);
+  if(error)console.warn('Kinora library delete failed',error);
+};
 const setAssistantMemory=memory=>{
   const normalized=normalizeAssistantMemory(memory);
   try{localStorage.setItem(assistantStorageKey,JSON.stringify(normalized));}catch{}
@@ -955,6 +1152,7 @@ const removeAssistantMemoryItem=(type,title)=>{
   delete next.ratings[title];
   delete next.movies[title];
   setAssistantMemory(next);
+  deleteSupabaseLibraryMovie(title);
 };
 const assistantLibrarySearchText=movie=>{
   const normalized=normalizeMovie(movie);
@@ -1598,8 +1796,10 @@ const openMovieDetails=async movie=>{
     button.textContent=String(score);
     button.setAttribute('aria-label',`Rate ${normalized.title} ${score} out of 10`);
     button.addEventListener('click',()=>{
+      if(!requireKinoraAuth())return;
       const next=getAssistantMemory();
       setAssistantMemory(setAssistantMovieStatus(next,movie,'rated',score));
+      upsertSupabaseLibraryMovie(movie,'rated',score);
       sync();
       ratingStatus.textContent=`Your rating: ${score}/10`;
     });
@@ -1616,8 +1816,8 @@ const openMovieDetails=async movie=>{
     ratingScale.querySelectorAll('button').forEach((button,index)=>button.classList.toggle('is-active',index+1===userRating));
     ratingStatus.textContent=userRating?`Your rating: ${userRating}/10`:'';
   };
-  save.addEventListener('click',()=>{const next=getAssistantMemory();const isActive=next.items?.[normalized.title]?.status==='saved';setAssistantMemory(isActive?setAssistantMovieStatus(next,movie,''):setAssistantMovieStatus(next,movie,'saved'));sync();});
-  watched.addEventListener('click',()=>{const next=getAssistantMemory();const status=next.items?.[normalized.title]?.status;setAssistantMemory(status==='watched'||status==='rated'?setAssistantMovieStatus(next,movie,''):setAssistantMovieStatus(next,movie,'watched'));sync();});
+  save.addEventListener('click',()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const isActive=next.items?.[normalized.title]?.status==='saved';setAssistantMemory(isActive?setAssistantMovieStatus(next,movie,''):setAssistantMovieStatus(next,movie,'saved'));if(isActive)deleteSupabaseLibraryMovie(normalized.title);else upsertSupabaseLibraryMovie(movie,'saved');sync();});
+  watched.addEventListener('click',()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const status=next.items?.[normalized.title]?.status;setAssistantMemory(status==='watched'||status==='rated'?setAssistantMovieStatus(next,movie,''):setAssistantMovieStatus(next,movie,'watched'));if(status==='watched'||status==='rated')deleteSupabaseLibraryMovie(normalized.title);else upsertSupabaseLibraryMovie(movie,'watched');sync();});
   trailer.addEventListener('click',()=>openTrailer(normalized));
   actions.append(save,watched,trailer,communityButton); detail.append(title,meta,storyLabel,overview,ratings,actions,ratingPanel); content.append(detail); message.textContent=''; sync(); trailerDialog.showModal();
 };
@@ -1772,6 +1972,65 @@ const savedCommunityMemories=()=>{
   try{return JSON.parse(localStorage.getItem(communityStorageKey)||'[]');}catch{return [];}
 };
 const persistCommunityMemories=memories=>localStorage.setItem(communityStorageKey,JSON.stringify(memories));
+const communityMemoryFromSupabase=row=>({
+  id:row.id,
+  userId:row.user_id,
+  movie:row.movie_title,
+  tmdbId:row.tmdb_id?String(row.tmdb_id):'',
+  releaseYear:row.release_year?String(row.release_year):'',
+  posterPath:row.poster_path||'',
+  poster:row.poster_url||'',
+  posterUrl:row.poster_url||'',
+  rating:String(row.rating||''),
+  name:row.display_name||row.username||'Kinora member',
+  'review-title':row.review_title,
+  experience:row.review_text,
+  preview:String(row.review_text||'').slice(0,120),
+  cinema:row.cinema_name||'Cinema memory',
+  'feeling-before':row.feeling_before||'-',
+  'feeling-after':row.feeling_after||'-',
+  recommend:row.recommend||'Maybe',
+  recordedAt:row.created_at,
+  isSupabase:true,
+  isLocal:row.user_id===currentUserId()
+});
+const loadSupabaseCommunityReviews=async ()=>{
+  if(!supabaseClient||!memoryWall)return;
+  const {data,error}=await supabaseClient.from('community_reviews').select('*').order('created_at',{ascending:false}).limit(50);
+  if(error){console.warn('Community reviews load failed',error);return;}
+  memoryWall.querySelectorAll('.memory-case[data-supabase-review="true"]').forEach(card=>card.remove());
+  (data||[]).reverse().forEach(row=>addMemoryCard(communityMemoryFromSupabase(row)));
+  applyCommunityReviewSearch();
+};
+const saveSupabaseCommunityReview=async memory=>{
+  if(!supabaseClient||!currentUserId())return null;
+  const payload={
+    user_id:currentUserId(),
+    username:kinoraProfile?.username||null,
+    display_name:kinoraProfile?.display_name||kinoraProfile?.username||kinoraSession?.user?.email||null,
+    tmdb_id:memory.tmdbId?Number(memory.tmdbId):null,
+    movie_title:memory.movie,
+    release_year:memory.releaseYear?Number(memory.releaseYear):null,
+    poster_url:memory.posterUrl||memory.poster||null,
+    poster_path:memory.posterPath||null,
+    rating:Number(String(memory.rating||'').match(/\d+/)?.[0]||memory.rating||0),
+    review_title:memory['review-title']||'Community review',
+    review_text:memory.experience||'',
+    cinema_name:memory.cinema||null,
+    feeling_before:memory['feeling-before']||null,
+    feeling_after:memory['feeling-after']||null,
+    recommend:memory.recommend||null
+  };
+  const {data,error}=await supabaseClient.from('community_reviews').insert(payload).select('*').single();
+  if(error){console.warn('Community review save failed',error);return null;}
+  return communityMemoryFromSupabase(data);
+};
+const deleteSupabaseCommunityReview=async reviewId=>{
+  if(!supabaseClient||!currentUserId()||!reviewId)return false;
+  const {error}=await supabaseClient.from('community_reviews').delete().eq('id',reviewId).eq('user_id',currentUserId());
+  if(error){console.warn('Community review delete failed',error);return false;}
+  return true;
+};
 const normalizeCommunityTitle=value=>String(value||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
 const communityPosterFallback=title=>posterFallback(title||'Community Review');
 const communityPosterFromPath=(posterPath,title)=>posterPath?`${imageBase}${posterPath}`:communityPosterFallback(title);
@@ -1941,7 +2200,7 @@ const addMemoryCard=memory=>{
   const isLocal=!!memory.isLocal;
   const reviewId=communityReviewId(memory);
   const card=document.createElement('article');card.className='memory-case is-visible';card.tabIndex=0;card.setAttribute('aria-label',`Open ${memory.name||'Anonymous'}'s review of ${memory.movie}`);
-  card.dataset.reviewId=reviewId;card.dataset.localReview=isLocal?'true':'false';card.dataset.movie=memory.movie;card.dataset.tmdbId=memory.tmdbId||'';card.dataset.releaseYear=memory.releaseYear||'';card.dataset.posterPath=memory.posterPath||'';card.dataset.reviewTitle=memory['review-title']||'Community review';card.dataset.rating=String(score);card.dataset.author=memory.name||'Anonymous';card.dataset.date=recordedAt;card.dataset.cinema=memory.cinema||'Cinema memory';card.dataset.poster=poster;card.dataset.experience=memory.experience||'A cinema memory worth keeping.';card.dataset.preview=memory.preview||memory.experience||'A cinema memory worth keeping.';card.dataset.before=memory['feeling-before']||'-';card.dataset.after=memory['feeling-after']||'-';card.dataset.recommend=memory.recommend||'Maybe';
+  card.dataset.reviewId=reviewId;card.dataset.localReview=isLocal?'true':'false';card.dataset.supabaseReview=memory.isSupabase?'true':'false';card.dataset.movie=memory.movie;card.dataset.tmdbId=memory.tmdbId||'';card.dataset.releaseYear=memory.releaseYear||'';card.dataset.posterPath=memory.posterPath||'';card.dataset.reviewTitle=memory['review-title']||'Community review';card.dataset.rating=String(score);card.dataset.author=memory.name||'Anonymous';card.dataset.date=recordedAt;card.dataset.cinema=memory.cinema||'Cinema memory';card.dataset.poster=poster;card.dataset.experience=memory.experience||'A cinema memory worth keeping.';card.dataset.preview=memory.preview||memory.experience||'A cinema memory worth keeping.';card.dataset.before=memory['feeling-before']||'-';card.dataset.after=memory['feeling-after']||'-';card.dataset.recommend=memory.recommend||'Maybe';
   const image=document.createElement('img');image.src=poster;image.alt=`Poster thumbnail for ${memory.movie}`;image.loading='eager';image.decoding='async';image.onerror=()=>{image.onerror=null;image.src=communityPosterFallback(memory.movie);card.dataset.poster=image.src;};
   const spine=document.createElement('span');spine.className='case-spine';
   const rating=document.createElement('span');rating.className='memory-rating';rating.textContent='★'.repeat(score)+'☆'.repeat(5-score);
@@ -2076,14 +2335,18 @@ communityArchive?.addEventListener('wheel',event=>{
   communityWheelDelta=Math.max(-communityWheelThreshold,Math.min(communityWheelThreshold,communityWheelDelta));
   flushCommunityWheel();
 },{passive:false});
-memoryWall?.addEventListener('click',event=>{
+memoryWall?.addEventListener('click',async event=>{
   const deleteButton=event.target.closest('[data-delete-review]');
   if(deleteButton){
     event.preventDefault();
     event.stopPropagation();
     const reviewId=deleteButton.dataset.deleteReview;
     const card=deleteButton.closest('.memory-case');
-    persistCommunityMemories(savedCommunityMemories().filter(memory=>communityReviewId(memory)!==reviewId));
+    if(card?.dataset.supabaseReview==='true'){
+      if(!await deleteSupabaseCommunityReview(reviewId))return;
+    }else{
+      persistCommunityMemories(savedCommunityMemories().filter(memory=>communityReviewId(memory)!==reviewId));
+    }
     const deletedIndex=communityCards.indexOf(card);
     card?.remove();
     applyCommunityReviewSearch();
@@ -2172,6 +2435,7 @@ updateGraceControls();
 upgradeSavedCommunityPosters();
 communityForm?.addEventListener('submit',async event=>{
   event.preventDefault(); const message=communityForm.querySelector('[data-community-message]'); message.textContent='Saving your cinema memory…';
+  if(!requireKinoraAuth('Please log in to write a public Kinora review.')){message.textContent='Please log in to write a public Kinora review.';return;}
   const formData=new FormData(communityForm);
   const memory=Object.fromEntries(formData.entries());
   if(selectedCommunityMovie&&(communityMovieInput.value.trim()===selectedCommunityMovie.displayTitle||communityMovieInput.value.trim()===selectedCommunityMovie.title)){
@@ -2215,7 +2479,13 @@ communityForm?.addEventListener('submit',async event=>{
     formData.set('poster',memory.posterUrl);
   }
   if(!memory.posterUrl){memory.posterUrl=communityPosterFallback(memory.movie);memory.poster=memory.posterUrl;formData.set('poster',memory.posterUrl);}
-  const saved=savedCommunityMemories(); const storedMemory={...memory,id:globalThis.crypto?.randomUUID?.()||`${Date.now()}-${Math.random().toString(16).slice(2)}`,recordedAt:new Date().toISOString()}; saved.push(storedMemory); persistCommunityMemories(saved);
-  if(!['localhost','127.0.0.1'].includes(location.hostname)){try{await fetch('/',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(formData).toString()});}catch{message.textContent='Saved on this device, but the online form could not be reached.';return;}}
-  addMemoryCard({...storedMemory,isLocal:true}); communityForm.reset(); clearCommunityMovieSelection(); hideCommunityMovieSuggestions(); message.textContent='Your review has been added. You can delete it for 1 minute.';
+  const supabaseMemory=await saveSupabaseCommunityReview(memory);
+  if(!supabaseMemory){message.textContent='The review could not be saved online. Please try again.';return;}
+  addMemoryCard({...supabaseMemory,isLocal:true}); communityForm.reset(); clearCommunityMovieSelection(); hideCommunityMovieSuggestions(); message.textContent='Your review has been added. You can delete it for 1 minute.';
 });
+const refreshKinoraPersonalData=async()=>{
+  if(!currentUserId())return;
+  await Promise.all([loadSupabaseLibrary(),loadSupabaseReminders(),loadSupabaseCommunityReviews()]);
+};
+document.addEventListener('kinora-auth-change',refreshKinoraPersonalData);
+setTimeout(refreshKinoraPersonalData,500);

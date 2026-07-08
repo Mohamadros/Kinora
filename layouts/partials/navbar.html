@@ -20,4 +20,26 @@
     <a href="{{ .URL }}">{{ .Name }}</a>
     {{ end }}
   </nav>
+  <div class="auth-controls" data-auth-controls>
+    <button class="auth-link" type="button" data-auth-open>Log in</button>
+    <button class="auth-link auth-user" type="button" data-auth-user hidden></button>
+    <button class="auth-link" type="button" data-auth-logout hidden>Log out</button>
+  </div>
 </header>
+<dialog class="auth-dialog" data-auth-dialog aria-label="Kinora account">
+  <form class="auth-panel" method="dialog" data-auth-form>
+    <button class="auth-close" type="button" data-auth-close aria-label="Close account dialog">×</button>
+    <span class="card-label">Kinora account</span>
+    <h2>Personalize Kinora</h2>
+    <p>Log in to save movies, rate films, write reviews, and set release reminders.</p>
+    <label>Email<input type="email" name="email" autocomplete="email" required></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password" required minlength="6"></label>
+    <label>Username<input type="text" name="username" autocomplete="username" placeholder="Only needed for sign up"></label>
+    <label>Display name<input type="text" name="displayName" autocomplete="name" placeholder="Optional"></label>
+    <div class="auth-actions">
+      <button class="button" type="submit" data-auth-action="login"><span>Log in</span><span aria-hidden="true">›</span></button>
+      <button class="button" type="submit" data-auth-action="signup"><span>Sign up</span><span aria-hidden="true">＋</span></button>
+    </div>
+    <p class="form-message" data-auth-message aria-live="polite"></p>
+  </form>
+</dialog>
