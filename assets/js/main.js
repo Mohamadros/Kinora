@@ -180,13 +180,18 @@ const setupAuth=async ()=>{
 };
 authOpenButton?.addEventListener('click',()=>openAuthDialog('', 'login'));
 const closeAccountMenu=()=>authUserButton?.setAttribute('aria-expanded','false');
+const updateAccountMenuActive=()=>{
+  accountMenuPanel?.querySelectorAll('a,button').forEach(item=>item.classList.remove('is-active'));
+  if(location.hash==='#my-library')accountMenuPanel?.querySelector('[data-account-link="my-library"]')?.classList.add('is-active');
+};
 authUserButton?.addEventListener('click',event=>{
   event.stopPropagation();
   const expanded=authUserButton.getAttribute('aria-expanded')==='true';
   authUserButton.setAttribute('aria-expanded',String(!expanded));
 });
-authProfileButton?.addEventListener('click',()=>{closeAccountMenu();openAuthDialog('You are logged in.','login');});
-accountMenuPanel?.querySelector('a')?.addEventListener('click',closeAccountMenu);
+authProfileButton?.addEventListener('click',()=>{closeAccountMenu();authProfileButton.classList.add('is-active');openAuthDialog('You are logged in.','login');});
+authDialog?.addEventListener('close',()=>authProfileButton?.classList.remove('is-active'));
+accountMenuPanel?.querySelectorAll('a').forEach(link=>link.addEventListener('click',closeAccountMenu));
 document.addEventListener('click',event=>{if(accountMenu&&!accountMenu.contains(event.target))closeAccountMenu();});
 document.querySelector('[data-auth-close]')?.addEventListener('click',()=>authDialog?.close());
 authModeButtons.forEach(button=>button.addEventListener('click',()=>setAuthMode(button.dataset.authModeButton)));
@@ -330,6 +335,9 @@ const focusMovieMatchInput=()=>{
 document.querySelectorAll('a[href$="#mood-finder"]').forEach(link=>link.addEventListener('click',focusMovieMatchInput));
 window.addEventListener('hashchange',focusMovieMatchInput);
 focusMovieMatchInput();
+window.addEventListener('hashchange',updateAccountMenuActive);
+window.addEventListener('load',updateAccountMenuActive);
+updateAccountMenuActive();
 
 const revealObserver = new IntersectionObserver(entries => entries.forEach(entry => {
   if (entry.isIntersecting) { entry.target.classList.add('is-visible'); revealObserver.unobserve(entry.target); }
