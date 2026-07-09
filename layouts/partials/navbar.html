@@ -22,8 +22,14 @@
   </nav>
   <div class="auth-controls" data-auth-controls>
     <button class="auth-link" type="button" data-auth-open>Log in</button>
-    <button class="auth-link auth-user" type="button" data-auth-user hidden></button>
-    <button class="auth-link" type="button" data-auth-logout hidden>Log out</button>
+    <div class="account-menu" data-account-menu hidden>
+      <button class="auth-link auth-user" type="button" data-auth-user aria-expanded="false" aria-controls="account-menu-panel"><span data-auth-initial></span><strong data-auth-name></strong></button>
+      <div id="account-menu-panel" class="account-menu-panel" data-account-menu-panel>
+        <a href="{{ "/#mood-finder" | relURL }}">My Library</a>
+        <button type="button" data-auth-profile>Profile</button>
+        <button type="button" data-auth-logout>Log out</button>
+      </div>
+    </div>
   </div>
 </header>
 <dialog class="auth-dialog" data-auth-dialog aria-label="Kinora account">
@@ -37,14 +43,15 @@
       <button type="button" class="auth-tab" data-auth-mode-button="signup">Sign up</button>
     </div>
     <label>Email<input type="email" name="email" autocomplete="email" required></label>
-    <label>Password<input type="password" name="password" autocomplete="current-password" required minlength="6"></label>
+    <label data-auth-password-field>Password<input type="password" name="password" autocomplete="current-password" required minlength="6"></label>
     <div class="auth-signup-fields" data-auth-signup-fields hidden>
       <label>Username<input type="text" name="username" autocomplete="username" placeholder="Choose a username"></label>
       <label>Display name<input type="text" name="displayName" autocomplete="name" placeholder="Optional"></label>
     </div>
     <div class="auth-actions">
-      <button class="button" type="submit" data-auth-submit><span data-auth-submit-label>Log in</span><span aria-hidden="true">›</span></button>
+      <button class="button" type="submit" data-auth-submit><span data-auth-submit-label>Log in</span><span aria-hidden="true" data-auth-submit-icon>›</span></button>
     </div>
+    <button class="auth-forgot" type="button" data-auth-forgot>Forgot password?</button>
     <button class="auth-switch" type="button" data-auth-switch>New to Kinora? Create account</button>
     <p class="form-message" data-auth-message aria-live="polite"></p>
   </form>
