@@ -9,9 +9,36 @@ const nav = document.querySelector('.primary-nav');
 const navDropdown = document.querySelector('[data-nav-dropdown]');
 const navDropdownToggle = document.querySelector('[data-nav-dropdown-toggle]');
 const token = document.querySelector('meta[name="tmdb-token"]')?.content.trim() || '';
-const supabaseUrl = document.querySelector('meta[name="supabase-url"]')?.content.trim() || '';
-const supabaseAnonKey = document.querySelector('meta[name="supabase-anon-key"]')?.content.trim() || '';
-const supabaseClient = supabaseUrl && supabaseAnonKey && window.supabase ? window.supabase.createClient(supabaseUrl, supabaseAnonKey) : null;
+const rawSupabaseUrl = document.querySelector('meta[name="supabase-url"]')?.content || '';
+const rawSupabaseAnonKey = document.querySelector('meta[name="supabase-anon-key"]')?.content || '';
+const normalizeSupabaseProjectUrl = value => {
+  let url = String(value || '').trim();
+  if (!url) return '';
+  if (!/^https?:\/\//i.test(url)) url = `https://${url}`;
+  try {
+    const parsed = new URL(url);
+    if (!/\.supabase\.co$/i.test(parsed.hostname)) return '';
+    return parsed.origin;
+  } catch (_error) {
+    return '';
+  }
+};
+const supabaseUrl = normalizeSupabaseProjectUrl(rawSupabaseUrl);
+const supabaseAnonKey = String(rawSupabaseAnonKey || '').trim();
+const supabaseKeyLooksSecret = /service[_-]?role|secret/i.test(supabaseAnonKey);
+const supabaseConfigError = (() => {
+  if (!String(rawSupabaseUrl || '').trim() || !supabaseAnonKey) return 'Add Supabase URL and anon key in hugo.toml first.';
+  if (!supabaseUrl) return 'Supabase URL must be the full project URL, for example https://PROJECT_ID.supabase.co. Do not include /auth/v1 or /rest/v1.';
+  if (supabaseKeyLooksSecret) return 'Use the Supabase publishable anon key in the frontend, not a secret or service_role key.';
+  return '';
+})();
+const supabaseGlobal = window.supabase || globalThis.supabase;
+console.info('Kinora Supabase config', {
+  supabaseUrl: supabaseUrl || String(rawSupabaseUrl || '').trim(),
+  anonKeyExists: Boolean(supabaseAnonKey),
+  configError: supabaseConfigError || null
+});
+const supabaseClient = !supabaseConfigError && supabaseGlobal ? supabaseGlobal.createClient(supabaseUrl, supabaseAnonKey) : null;
 const siteRoot = document.body?.dataset.siteRoot || '/';
 const apiBase = 'https://api.themoviedb.org/3';
 const imageBase = 'https://image.tmdb.org/t/p/w500';
@@ -45,6 +72,12 @@ const updateAuthUI=()=>{
   if(authUserButton){authUserButton.hidden=!signedIn;authUserButton.textContent=signedIn?authDisplayName():'';}
   if(authLogoutButton)authLogoutButton.hidden=!signedIn;
 };
+const readableSupabaseAuthError=error=>{
+  const message=String(error?.message||error||'Supabase authentication failed.');
+  if(message.includes('Invalid path specified in request URL'))return 'Supabase URL is invalid. Use https://PROJECT_ID.supabase.co in hugo.toml, without /auth/v1 or /rest/v1.';
+  if(message.toLowerCase().includes('invalid api key'))return 'Supabase anon key is invalid. Use the publishable anon key, not a service role or secret key.';
+  return message;
+};
 const fetchKinoraProfile=async ()=>{
   if(!supabaseClient||!currentUserId())return null;
   const {data,error}=await supabaseClient.from('profiles').select('*').eq('id',currentUserId()).maybeSingle();
@@ -62,6 +95,7 @@ const upsertKinoraProfile=async ({username='',displayName=''}={})=>{
 };
 const setupAuth=async ()=>{
   if(!supabaseClient){
+    if(supabaseConfigError)console.warn('Kinora Supabase client disabled', {supabaseUrl: supabaseUrl || String(rawSupabaseUrl || '').trim(), anonKeyExists: Boolean(supabaseAnonKey), error: supabaseConfigError});
     updateAuthUI();
     return;
   }
@@ -87,7 +121,11 @@ authLogoutButton?.addEventListener('click',async()=>{
 });
 authForm?.addEventListener('submit',async event=>{
   event.preventDefault();
-  if(!supabaseClient){displayAuthMessage('Add Supabase URL and anon key in hugo.toml first.');return;}
+  if(!supabaseClient){
+    console.error('Kinora Supabase client unavailable', {supabaseUrl: supabaseUrl || String(rawSupabaseUrl || '').trim(), anonKeyExists: Boolean(supabaseAnonKey), error: supabaseConfigError || 'Supabase library did not load.'});
+    displayAuthMessage(supabaseConfigError||'Supabase client could not start. Check the browser console.');
+    return;
+  }
   const submitter=event.submitter;
   const action=submitter?.dataset.authAction||'login';
   const formData=new FormData(authForm);
@@ -99,7 +137,11 @@ authForm?.addEventListener('submit',async event=>{
   const response=action==='signup'
     ? await supabaseClient.auth.signUp({email,password,options:{data:{username,display_name:displayName}}})
     : await supabaseClient.auth.signInWithPassword({email,password});
-  if(response.error){displayAuthMessage(response.error.message);return;}
+  if(response.error){
+    console.error('Kinora Supabase auth error', response.error);
+    displayAuthMessage(readableSupabaseAuthError(response.error));
+    return;
+  }
   kinoraSession=response.data.session||kinoraSession;
   if(kinoraSession)await upsertKinoraProfile({username,displayName});
   displayAuthMessage(action==='signup'&&!response.data.session?'Check your email to confirm your Kinora account.':'You are logged in.');
