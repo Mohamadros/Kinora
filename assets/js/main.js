@@ -49,20 +49,53 @@ const authLogoutButton=document.querySelector('[data-auth-logout]');
 const authDialog=document.querySelector('[data-auth-dialog]');
 const authForm=document.querySelector('[data-auth-form]');
 const authMessage=document.querySelector('[data-auth-message]');
+const authTitle=document.querySelector('[data-auth-title]');
+const authCopy=document.querySelector('[data-auth-copy]');
+const authModeButtons=[...document.querySelectorAll('[data-auth-mode-button]')];
+const authSignupFields=document.querySelector('[data-auth-signup-fields]');
+const authSubmitLabel=document.querySelector('[data-auth-submit-label]');
+const authSwitch=document.querySelector('[data-auth-switch]');
 let kinoraSession=null;
 let kinoraProfile=null;
 let kinoraLibraryReady=false;
 const isSupabaseReady=()=>Boolean(supabaseClient);
 const currentUserId=()=>kinoraSession?.user?.id||'';
 const displayAuthMessage=message=>{if(authMessage)authMessage.textContent=message;};
-const openAuthDialog=message=>{
+const authModeContent={
+  login:{title:'Log in',copy:'Access your saved movies, ratings, reviews, and release reminders.',submit:'Log in',switch:'New to Kinora? Create account'},
+  signup:{title:'Create account',copy:'Create your Kinora account to save movies, write reviews, and personalize recommendations.',submit:'Create account',switch:'Already have an account? Log in'}
+};
+const setAuthMode=(mode='login')=>{
+  const nextMode=mode==='signup'?'signup':'login';
+  authForm?.setAttribute('data-auth-mode',nextMode);
+  const content=authModeContent[nextMode];
+  if(authTitle)authTitle.textContent=content.title;
+  if(authCopy)authCopy.textContent=content.copy;
+  if(authSubmitLabel)authSubmitLabel.textContent=content.submit;
+  if(authSwitch)authSwitch.textContent=content.switch;
+  if(authSignupFields)authSignupFields.hidden=nextMode!=='signup';
+  authModeButtons.forEach(button=>button.classList.toggle('is-active',button.dataset.authModeButton===nextMode));
+  const usernameInput=authForm?.elements.username;
+  const displayNameInput=authForm?.elements.displayName;
+  const passwordInput=authForm?.elements.password;
+  if(usernameInput)usernameInput.required=nextMode==='signup';
+  if(displayNameInput)displayNameInput.required=false;
+  if(passwordInput)passwordInput.autocomplete=nextMode==='signup'?'new-password':'current-password';
+  displayAuthMessage('');
+};
+function fillCommunityReviewName(){
+  const input=document.querySelector('[data-community-form] input[name="name"]');
+  if(input&&currentUserId()&&!input.value.trim())input.value=authDisplayName();
+}
+const openAuthDialog=(message='',mode='login')=>{
+  setAuthMode(mode);
   displayAuthMessage(message||'');
   if(authDialog&&typeof authDialog.showModal==='function')authDialog.showModal();
   else alert(message||'Please log in to continue.');
 };
 const requireKinoraAuth=message=>{
   if(currentUserId())return true;
-  openAuthDialog(message||'Please log in to save this to your Kinora library.');
+  openAuthDialog(message||'Log in to save this to your Kinora library.','login');
   return false;
 };
 const authDisplayName=()=>kinoraProfile?.display_name||kinoraProfile?.username||kinoraSession?.user?.email||'Kinora user';
@@ -76,6 +109,7 @@ const readableSupabaseAuthError=error=>{
   const message=String(error?.message||error||'Supabase authentication failed.');
   if(message.includes('Invalid path specified in request URL'))return 'Supabase URL is invalid. Use https://PROJECT_ID.supabase.co in hugo.toml, without /auth/v1 or /rest/v1.';
   if(message.toLowerCase().includes('invalid api key'))return 'Supabase anon key is invalid. Use the publishable anon key, not a service role or secret key.';
+  if(message.toLowerCase().includes('already registered')||message.toLowerCase().includes('already exists'))return 'This email is already registered. Please log in instead.';
   return message;
 };
 const fetchKinoraProfile=async ()=>{
@@ -84,6 +118,7 @@ const fetchKinoraProfile=async ()=>{
   if(error){console.warn('Kinora profile load failed',error);return null;}
   kinoraProfile=data;
   updateAuthUI();
+  fillCommunityReviewName();
   return data;
 };
 const upsertKinoraProfile=async ({username='',displayName=''}={})=>{
@@ -111,9 +146,11 @@ const setupAuth=async ()=>{
     document.dispatchEvent(new CustomEvent('kinora-auth-change'));
   });
 };
-authOpenButton?.addEventListener('click',()=>openAuthDialog());
-authUserButton?.addEventListener('click',()=>openAuthDialog('You are logged in. Profile editing fields update your public name on sign up.'));
+authOpenButton?.addEventListener('click',()=>openAuthDialog('', 'login'));
+authUserButton?.addEventListener('click',()=>openAuthDialog('You are logged in.','login'));
 document.querySelector('[data-auth-close]')?.addEventListener('click',()=>authDialog?.close());
+authModeButtons.forEach(button=>button.addEventListener('click',()=>setAuthMode(button.dataset.authModeButton)));
+authSwitch?.addEventListener('click',()=>setAuthMode(authForm?.getAttribute('data-auth-mode')==='signup'?'login':'signup'));
 authLogoutButton?.addEventListener('click',async()=>{
   if(!supabaseClient)return;
   await supabaseClient.auth.signOut();
@@ -126,13 +163,13 @@ authForm?.addEventListener('submit',async event=>{
     displayAuthMessage(supabaseConfigError||'Supabase client could not start. Check the browser console.');
     return;
   }
-  const submitter=event.submitter;
-  const action=submitter?.dataset.authAction||'login';
+  const action=authForm.getAttribute('data-auth-mode')==='signup'?'signup':'login';
   const formData=new FormData(authForm);
   const email=String(formData.get('email')||'').trim();
   const password=String(formData.get('password')||'');
   const username=String(formData.get('username')||'').trim();
   const displayName=String(formData.get('displayName')||'').trim();
+  if(action==='signup'&&!username){displayAuthMessage('Choose a username for your Kinora account.');return;}
   displayAuthMessage(action==='signup'?'Creating your account…':'Logging in…');
   const response=action==='signup'
     ? await supabaseClient.auth.signUp({email,password,options:{data:{username,display_name:displayName}}})
@@ -142,10 +179,16 @@ authForm?.addEventListener('submit',async event=>{
     displayAuthMessage(readableSupabaseAuthError(response.error));
     return;
   }
+  if(action==='signup'&&Array.isArray(response.data.user?.identities)&&response.data.user.identities.length===0){
+    setAuthMode('login');
+    displayAuthMessage('This email is already registered. Please log in instead.');
+    return;
+  }
   kinoraSession=response.data.session||kinoraSession;
   if(kinoraSession)await upsertKinoraProfile({username,displayName});
   displayAuthMessage(action==='signup'&&!response.data.session?'Check your email to confirm your Kinora account.':'You are logged in.');
   updateAuthUI();
+  fillCommunityReviewName();
   setTimeout(()=>authDialog?.close(),700);
   document.dispatchEvent(new CustomEvent('kinora-auth-change'));
 });
@@ -435,7 +478,7 @@ const fillGenres = genres => { genres.forEach(genre => { const option=document.c
 const getRadarStore=key=>{try{return JSON.parse(localStorage.getItem(key)||'[]');}catch{return [];}};
 const setRadarStore=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value));}catch{}};
 const saveSupabaseReminder=async movie=>{
-  if(!requireKinoraAuth('Please log in to save release reminders.'))return false;
+  if(!requireKinoraAuth('Log in to save this to your Kinora library.'))return false;
   if(!supabaseClient)return false;
   const normalized=normalizeRadarMovie(movie);
   const payload={
@@ -639,7 +682,7 @@ const createRadarCard=rawMovie=>{
   watch.type='button'; watch.className='watchlist-button'; watch.textContent=watchlist.has(movie.title)?'Reminder saved':'Save release reminder';
   watch.addEventListener('click',async()=>{
     if(!currentUserId()){
-      requireKinoraAuth('Please log in to save release reminders.');
+      requireKinoraAuth('Log in to save this to your Kinora library.');
       return;
     }
     if(await saveSupabaseReminder(movie)){
@@ -2477,7 +2520,7 @@ updateGraceControls();
 upgradeSavedCommunityPosters();
 communityForm?.addEventListener('submit',async event=>{
   event.preventDefault(); const message=communityForm.querySelector('[data-community-message]'); message.textContent='Saving your cinema memory…';
-  if(!requireKinoraAuth('Please log in to write a public Kinora review.')){message.textContent='Please log in to write a public Kinora review.';return;}
+  if(!requireKinoraAuth('Log in to save this to your Kinora library.')){message.textContent='Log in to save this to your Kinora library.';return;}
   const formData=new FormData(communityForm);
   const memory=Object.fromEntries(formData.entries());
   if(selectedCommunityMovie&&(communityMovieInput.value.trim()===selectedCommunityMovie.displayTitle||communityMovieInput.value.trim()===selectedCommunityMovie.title)){
