@@ -1656,18 +1656,22 @@ const assistantAgeLabels={old:'older classic',modern:'modern classic',new:'newer
 const assistantTimeLabels={short:'under 100 minutes',medium:'100-140 minutes',long:'over 140 minutes'};
 const assistantDiscoverMaxPages=50;
 const assistantDiscoverBatchSize=20;
-const assistantCacheKey='cinemaMovieMatchCandidateCacheV2';
+const assistantCacheKey='cinemaMovieMatchCandidateCacheV3';
+const assistantStaticPackageUrl=`${siteRoot}data/movie-match-candidates.json`;
 const assistantCacheTtl=24*60*60*1000;
 const assistantCacheMinimum=2000;
 const assistantCacheTarget=3200;
 let assistantMovieCache=[];
 let assistantCachePromise=null;
 let currentAssistantRecommendations=[];
+let assistantStaticPackageCache=null;
+let assistantStaticPackagePromise=null;
 const assistantDebug=(label,payload={})=>{
   const message=`Movie Match ${label}: ${JSON.stringify(payload)}`;
   console.log(message);
   window.movieMatchDebug=[...(window.movieMatchDebug||[]),{label,payload,recordedAt:new Date().toISOString()}].slice(-80);
 };
+const assistantDataSourceLog=(source,payload={})=>assistantDebug('data source',{source,tmdbTokenExists:Boolean(token),...payload});
 const selectedGenreId=answers=>answers.genre==='any'?0:Number(answers.genre||0);
 const debugGenreFilterResult=(movie,answers,context='genre filter')=>{
   const selectedId=selectedGenreId(answers);
@@ -1826,6 +1830,37 @@ const saveAssistantMovieCache=movies=>{
     localStorage.setItem(assistantCacheKey,JSON.stringify({version:2,createdAt:Date.now(),expiresAt:Date.now()+assistantCacheTtl,movies:compact}));
   }catch(error){assistantDebug('cache save skipped',{cacheSize:compact.length,message:String(error)});}
 };
+const normalizeStaticMoviePackageMovie=movie=>normalizeAssistantCacheMovie({
+  ...movie,
+  genreIds:movie.genre_ids||movie.genreIds||[],
+  genre:movie.genreNames?.join(' · ')||movie.genre,
+  voteAverage:movie.vote_average,
+  vote_average:movie.vote_average,
+  releaseDate:movie.release_date,
+  release_date:movie.release_date
+});
+const loadAssistantStaticPackage=async ()=>{
+  if(assistantStaticPackageCache)return assistantStaticPackageCache;
+  if(assistantStaticPackagePromise)return assistantStaticPackagePromise;
+  assistantStaticPackagePromise=fetch(assistantStaticPackageUrl,{cache:'force-cache'})
+    .then(response=>{
+      if(!response.ok)throw new Error(`Static package unavailable: ${response.status}`);
+      return response.json();
+    })
+    .then(packageData=>{
+      const movies=(packageData.movies||[]).map(normalizeStaticMoviePackageMovie).filter(movie=>movie.title&&movieGenreIds(movie).length);
+      assistantStaticPackageCache=mergeAssistantMovieSets(movies);
+      assistantDataSourceLog('static content package',{candidateCount:assistantStaticPackageCache.length,packageCount:packageData.count||movies.length});
+      return assistantStaticPackageCache;
+    })
+    .catch(error=>{
+      assistantDebug('static package failed',{url:assistantStaticPackageUrl,message:String(error)});
+      assistantStaticPackageCache=[];
+      return [];
+    })
+    .finally(()=>{assistantStaticPackagePromise=null;});
+  return assistantStaticPackagePromise;
+};
 const mergeAssistantMovieSets=(...sets)=>{
   const byId=new Map();
   let duplicates=0;
@@ -1896,23 +1931,33 @@ const fetchAssistantExactGenrePool=async answers=>{
 };
 const warmAssistantMovieCache=async ({force=false}={})=>{
   const cached=loadAssistantMovieCache();
-  if(!force&&cached.length>=assistantCacheMinimum)return cached;
+  if(!force&&cached.length>=assistantCacheMinimum){assistantDataSourceLog('cache',{candidateCount:cached.length});return cached;}
   if(assistantCachePromise)return assistantCachePromise;
   assistantCachePromise=(async ()=>{
     if(!token){
-      assistantDebug('cache using fallback',{reason:'missing token'});
-      assistantMovieCache=assistantFallback.map(movie=>normalizeAssistantCacheMovie(movie));
-      return assistantMovieCache;
+      assistantDataSourceLog('static content package',{reason:'missing TMDb token'});
+      const staticMovies=await loadAssistantStaticPackage();
+      if(staticMovies.length)return staticMovies;
+      assistantDataSourceLog('fallback',{reason:'missing TMDb token and static package unavailable'});
+      return assistantFallback.map(movie=>normalizeAssistantCacheMovie(movie));
     }
+    assistantDataSourceLog('TMDB',{status:'fetching',tmdbTokenExists:Boolean(token)});
     assistantDebug('cache fetch status',{status:'fetching',currentSize:cached.length,target:assistantCacheTarget});
     const fetched=await fetchAssistantDiscoverPool();
     const merged=mergeAssistantMovieSets(cached,fetched);
     saveAssistantMovieCache(merged);
+    assistantDataSourceLog('TMDB',{candidateCount:merged.length});
     assistantDebug('cache fetch status',{status:'ready',cacheSize:merged.length});
     return merged;
   })().catch(error=>{
     assistantDebug('cache fetch status',{status:'failed',message:String(error)});
-    return loadAssistantMovieCache().length?loadAssistantMovieCache():assistantFallback.map(movie=>normalizeAssistantCacheMovie(movie));
+    const restored=loadAssistantMovieCache();
+    if(restored.length){assistantDataSourceLog('cache',{candidateCount:restored.length,reason:'TMDb fetch failed'});return restored;}
+    return loadAssistantStaticPackage().then(staticMovies=>{
+      if(staticMovies.length){assistantDataSourceLog('static content package',{candidateCount:staticMovies.length,reason:'TMDb fetch failed'});return staticMovies;}
+      assistantDataSourceLog('fallback',{reason:'TMDb fetch and static package failed'});
+      return assistantFallback.map(movie=>normalizeAssistantCacheMovie(movie));
+    });
   }).finally(()=>{assistantCachePromise=null;});
   return assistantCachePromise;
 };
@@ -2089,7 +2134,7 @@ const closeAssistantCandidate=(movie,answers)=>{
   return true;
 };
 const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
-  const source=uniqueAssistantMovies(candidates.length?candidates:assistantFallback);
+  const source=uniqueAssistantMovies(candidates);
   const strictSource=source.filter(movie=>strictAssistantCandidate(movie,answers,memory));
   let usedCloseMatches=false;
   let scoringSource=strictSource;
@@ -2097,7 +2142,7 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
     scoringSource=source.filter(movie=>closeAssistantCandidate(movie,answers));
     usedCloseMatches=true;
   }
-  assistantDebug('candidates after strict filtering',{sourceCount:source.length,strictCount:strictSource.length,scoringCount:scoringSource.length,usingFallback:!candidates.length,usedCloseMatches,answers});
+  assistantDebug('candidates after strict filtering',{sourceCount:source.length,selectedGenreId:selectedGenreId(answers)||null,selectedGenreName:genreNames[selectedGenreId(answers)]||'Any genre',countBeforeFiltering:source.length,countAfterStrictFiltering:strictSource.length,strictCount:strictSource.length,scoringCount:scoringSource.length,usingFallback:!candidates.length,usedCloseMatches,answers});
   const ranked=scoringSource
     .map(movie=>scoreAssistantMovieDetailed(movie,answers,memory))
     .sort((a,b)=>b.score-a.score);
@@ -2109,24 +2154,35 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
   return {pool:pool.slice(0,5),exactEnough:!usedCloseMatches&&pool.length>=3&&bestScore>28&&fifthScore>18,ranked,strictCount:strictSource.length,usedCloseMatches};
 };
 const renderPosterWall=movies=>{
-  if(!movies.length){
-    assistantDebug('render skipped empty results',{currentRecommendationCount:currentAssistantRecommendations.length});
+  const answers=getAssistantFilters();
+  const finalMovies=movies.filter(movie=>movieHasSelectedGenre(movie,answers)&&movieHasSelectedAge(movie,answers)&&movieHasSelectedRuntime({...normalizeMovie(movie),runtime:movie.runtime},answers));
+  if(finalMovies.length!==movies.length){
+    assistantDebug('final render guard removed results',{removed:movies.filter(movie=>!finalMovies.includes(movie)).map(movie=>({
+      title:normalizeMovie(movie).title,
+      genreIds:movieGenreIds(movie),
+      year:normalizeMovie(movie).year
+    })),selectedGenreId:selectedGenreId(answers)||null,selectedGenreName:genreNames[selectedGenreId(answers)]||'Any genre'});
+  }
+  if(!finalMovies.length){
+    assistantResults.innerHTML='';
+    currentAssistantRecommendations=[];
+    assistantDebug('render empty after final guard',{candidateCount:movies.length,selectedGenreId:selectedGenreId(answers)||null,selectedGenreName:genreNames[selectedGenreId(answers)]||'Any genre'});
     return false;
   }
   assistantResults.innerHTML='';
-  currentAssistantRecommendations=[...movies];
-  assistantDebug('rendered results',{results:movies.map(movie=>({
+  currentAssistantRecommendations=[...finalMovies];
+  assistantDebug('rendered results',{results:finalMovies.map(movie=>({
     title:normalizeMovie(movie).title,
-    selectedGenreId:selectedGenreId(getAssistantFilters())||null,
-    selectedGenreName:genreNames[selectedGenreId(getAssistantFilters())]||'Any genre',
+    selectedGenreId:selectedGenreId(answers)||null,
+    selectedGenreName:genreNames[selectedGenreId(answers)]||'Any genre',
     poster_path:movie.poster_path||'',
     posterUrl:normalizeMovie(movie).poster,
     genres:movieGenreIds(movie),
     genreNames:movieGenreIds(movie).map(id=>genreNames[id]||String(id)),
-    passedGenreFilter:movieHasSelectedGenre(movie,getAssistantFilters()),
+    passedGenreFilter:movieHasSelectedGenre(movie,answers),
     year:normalizeMovie(movie).year
   }))});
-  movies.forEach(movie=>assistantResults.appendChild(createAssistantCard(movie)));
+  finalMovies.forEach(movie=>assistantResults.appendChild(createAssistantCard(movie)));
   return true;
 };
 const updateMovieWall=async ({scroll=false,different=false}={})=>{
@@ -2139,17 +2195,36 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   lastAssistantFilterSignature=filterSignature;
   assistantPanel.hidden=false; assistantPanel.classList.add('is-visible');
   const cached=loadAssistantMovieCache();
-  const hasCache=cached.length>=5;
-  const immediateSource=hasCache?cached:assistantFallback.map(movie=>normalizeAssistantCacheMovie(movie));
+  const staticSource=cached.length>=5?[]:await loadAssistantStaticPackage();
+  if(requestId!==assistantRenderRequest)return;
+  let immediateSource=[];
+  let activeSource='fallback';
+  if(cached.length>=5){
+    immediateSource=cached;
+    activeSource='cache';
+  }else if(staticSource.length){
+    immediateSource=staticSource;
+    activeSource='static content package';
+  }else if(token){
+    immediateSource=[];
+    activeSource='TMDB';
+  }else{
+    immediateSource=[];
+    activeSource='fallback';
+    assistantReason.textContent='Live movie data is not available. TMDB configuration is missing.';
+  }
+  assistantDataSourceLog(activeSource,{candidateCount:immediateSource.length,tmdbTokenExists:Boolean(token)});
   const immediate=getAssistantMoviePool(immediateSource,answers,memory,{different});
-  assistantDebug('selected filters',{answers,cacheSize:cached.length,filtersChanged,different});
+  assistantDebug('selected filters',{answers,dataSource:activeSource,cacheSize:cached.length,staticCount:staticSource.length,filtersChanged,different});
   if(immediate.pool.length){
-    renderPosterWall(immediate.pool);
-    assistantReason.textContent=immediate.usedCloseMatches?
+    const rendered=renderPosterWall(immediate.pool);
+    assistantReason.textContent=!rendered?
+      `No exact ${genreNames[selectedGenreId(answers)]||'genre'} matches found for these filters.`:
+      immediate.usedCloseMatches?
       `Not enough strict matches yet, showing close matches while the movie cache updates: ${immediate.pool.map(movie=>normalizeMovie(movie).title).join(', ')}.`:
       (immediate.exactEnough?assistantExplanation(answers,immediate.pool.map(normalizeMovie)):closestAssistantExplanation(answers,immediate.pool.map(normalizeMovie)));
   }else if(!assistantResults.children.length){
-    assistantReason.textContent='Building the movie cache. Recommendations will appear here shortly.';
+    assistantReason.textContent=token?'Building the movie cache. Recommendations will appear here shortly.':'Live movie data is not available. TMDB configuration is missing.';
   }else{
     assistantReason.textContent='Updating recommendations…';
   }
@@ -2165,8 +2240,10 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
         saveAssistantMovieCache(mergeAssistantMovieSets(loadAssistantMovieCache(),mergedExact));
         const exactPool=getAssistantMoviePool(mergedExact,answers,memory,{different});
         if(exactPool.pool.length){
-          renderPosterWall(exactPool.pool);
-          assistantReason.textContent=exactPool.usedCloseMatches?
+          const rendered=renderPosterWall(exactPool.pool);
+          assistantReason.textContent=!rendered?
+            `No exact ${genreNames[selectedGenreId(answers)]||'genre'} matches found for these filters.`:
+            exactPool.usedCloseMatches?
             `Not enough exact matches. Showing close picks that still match ${genreNames[selectedGenreId(answers)]}.`:
             (exactPool.exactEnough?assistantExplanation(answers,exactPool.pool.map(normalizeMovie)):closestAssistantExplanation(answers,exactPool.pool.map(normalizeMovie)));
           if(exactPool.strictCount>=5)return;
@@ -2177,14 +2254,15 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     const candidates=await warmAssistantMovieCache({force:cached.length<assistantCacheMinimum});
     if(requestId!==assistantRenderRequest)return;
     const {pool,exactEnough,usedCloseMatches}=getAssistantMoviePool(candidates,answers,memory,{different});
-    if(pool.length)renderPosterWall(pool);
-    assistantReason.textContent=pool.length?(usedCloseMatches?`Not enough matches, showing close matches: ${pool.map(movie=>normalizeMovie(movie).title).join(', ')}.`:(exactEnough?assistantExplanation(answers,pool.map(normalizeMovie)):closestAssistantExplanation(answers,pool.map(normalizeMovie)))):`No strong ${answers.platform} matches found for these filters. Try another genre, age, or platform.`;
+    const rendered=pool.length?renderPosterWall(pool):false;
+    assistantReason.textContent=pool.length&&rendered?(usedCloseMatches?`Not enough exact matches. Showing close picks that still match ${genreNames[selectedGenreId(answers)]||'the selected genre'}.`:(exactEnough?assistantExplanation(answers,pool.map(normalizeMovie)):closestAssistantExplanation(answers,pool.map(normalizeMovie)))):`No exact matches found for these filters. Try another genre, age, or runtime.`;
   }catch(error){
     if(requestId!==assistantRenderRequest)return;
+    assistantDataSourceLog('fallback',{reason:String(error)});
     const fallbackForCurrentFilters=assistantFallback;
     const {pool}=getAssistantMoviePool(fallbackForCurrentFilters,answers,memory,{different});
-    if(pool.length)renderPosterWall(pool);
-    assistantReason.textContent=pool.length?closestAssistantExplanation(answers,pool.map(normalizeMovie)):`No strong ${answers.platform} matches found for these filters. Try another genre, age, or platform.`;
+    const rendered=pool.length?renderPosterWall(pool):false;
+    assistantReason.textContent=pool.length&&rendered?closestAssistantExplanation(answers,pool.map(normalizeMovie)):`No exact matches found for these filters. Try another genre, age, or runtime.`;
   }
   if(scroll)assistantPanel.scrollIntoView({behavior:'smooth',block:'start'});
 };
