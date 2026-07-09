@@ -42,7 +42,8 @@ const supabaseClient = !supabaseConfigError && supabaseGlobal ? supabaseGlobal.c
 const siteRoot = document.body?.dataset.siteRoot || '/';
 const apiBase = 'https://api.themoviedb.org/3';
 const imageBase = 'https://image.tmdb.org/t/p/w500';
-let genreNames = { 12: 'Adventure', 16: 'Animation', 18: 'Drama', 27: 'Horror', 28: 'Action', 35: 'Comedy', 36: 'History', 53: 'Thriller', 80: 'Crime', 99: 'Documentary', 10749: 'Romance', 10751: 'Family', 878: 'Science Fiction' };
+const tmdbGenreNames = { 28:'Action', 12:'Adventure', 16:'Animation', 35:'Comedy', 80:'Crime', 99:'Documentary', 18:'Drama', 10751:'Family', 14:'Fantasy', 36:'History', 27:'Horror', 10402:'Music', 9648:'Mystery', 10749:'Romance', 878:'Science Fiction', 53:'Thriller', 10752:'War', 37:'Western' };
+let genreNames = {...tmdbGenreNames};
 const authOpenButton=document.querySelector('[data-auth-open]');
 const authUserButton=document.querySelector('[data-auth-user]');
 const authLogoutButton=document.querySelector('[data-auth-logout]');
@@ -377,7 +378,10 @@ const assistantPosterFallback = title => {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 };
 
-const movieGenreIds=movie=>movie.genre_ids||movie.genreIds||(movie.genres||[]).map(genre=>genre.id).filter(Boolean)||[];
+const movieGenreIds=movie=>{
+  const source=movie.genre_ids||movie.genreIds||(movie.genres||[]).map(genre=>genre.id);
+  return [...new Set((source||[]).map(id=>Number(id)).filter(id=>Number.isFinite(id)&&tmdbGenreNames[id]))];
+};
 const normalizeMovie = movie => ({
   id: movie.id || null,
   title: movie.title,
@@ -1406,9 +1410,9 @@ const movieMatchesPlatform=(movie,platform)=>{
 };
 const movieMatchesAge=(movie,age)=>{
   const year=Number(movie.year||(movie.release_date||'').slice(0,4)||0);
-  if(age==='new')return year>=2015;
-  if(age==='modern')return year>=1990&&year<=2014;
-  if(age==='old')return year>0&&year<1990;
+  if(age==='new')return year>=2019;
+  if(age==='modern')return year>=2005&&year<=2018;
+  if(age==='old')return year>0&&year<2005;
   return true;
 };
 const movieMatchesTime=(movie,time)=>{
@@ -1665,6 +1669,20 @@ const assistantDebug=(label,payload={})=>{
   window.movieMatchDebug=[...(window.movieMatchDebug||[]),{label,payload,recordedAt:new Date().toISOString()}].slice(-80);
 };
 const selectedGenreId=answers=>answers.genre==='any'?0:Number(answers.genre||0);
+const debugGenreFilterResult=(movie,answers,context='genre filter')=>{
+  const selectedId=selectedGenreId(answers);
+  if(!selectedId)return;
+  const normalized=normalizeMovie(movie);
+  const genreIds=movieGenreIds(movie);
+  assistantDebug(context,{
+    title:normalized.title,
+    selectedGenreId:selectedId,
+    selectedGenreName:genreNames[selectedId]||String(selectedId),
+    movieGenreIds:genreIds,
+    movieGenreNames:genreIds.map(id=>genreNames[id]||String(id)),
+    passedGenreFilter:genreIds.includes(selectedId)
+  });
+};
 const movieHasSelectedGenre=(movie,answers)=>{
   const genreId=selectedGenreId(answers);
   const genreIds=movieGenreIds(movie);
@@ -1827,11 +1845,11 @@ const assistantDiscoverStrategies=()=>{
   const strategies=[
     {name:'popular',pages:25,params:{...base,sort_by:'popularity.desc','vote_count.gte':'50'}},
     {name:'high-rated',pages:25,params:{...base,sort_by:'vote_average.desc','vote_count.gte':'300'}},
-    {name:'older-classics',pages:20,params:{...base,sort_by:'vote_average.desc','vote_count.gte':'120','primary_release_date.lte':'1989-12-31'}},
-    {name:'modern',pages:20,params:{...base,sort_by:'popularity.desc','vote_count.gte':'80','primary_release_date.gte':'1990-01-01','primary_release_date.lte':'2014-12-31'}},
-    {name:'newer',pages:20,params:{...base,sort_by:'popularity.desc','vote_count.gte':'40','primary_release_date.gte':'2015-01-01'}}
+    {name:'older-classics',pages:20,params:{...base,sort_by:'vote_average.desc','vote_count.gte':'120','primary_release_date.lte':'2004-12-31'}},
+    {name:'modern',pages:20,params:{...base,sort_by:'popularity.desc','vote_count.gte':'80','primary_release_date.gte':'2005-01-01','primary_release_date.lte':'2018-12-31'}},
+    {name:'newer',pages:20,params:{...base,sort_by:'popularity.desc','vote_count.gte':'40','primary_release_date.gte':'2019-01-01'}}
   ];
-  [16,28,878,18,35,53,10749].forEach(genreId=>{
+  Object.keys(tmdbGenreNames).map(Number).forEach(genreId=>{
     strategies.push({name:`genre-${genreId}`,pages:5,params:{...base,sort_by:'popularity.desc','vote_count.gte':'30',with_genres:String(genreId)}});
   });
   return strategies;
@@ -1854,6 +1872,27 @@ const fetchAssistantDiscoverPool=async ()=>{
   const merged=mergeAssistantMovieSets(movies).slice(0,assistantCacheTarget);
   assistantDebug('TMDb fetched movies',{strategyCount:strategies.length,rawFetched:movies.length,uniqueFetched:merged.length});
   return merged;
+};
+const assistantYearParams=answers=>{
+  if(answers.age==='old')return {'primary_release_date.lte':'2004-12-31'};
+  if(answers.age==='modern')return {'primary_release_date.gte':'2005-01-01','primary_release_date.lte':'2018-12-31'};
+  if(answers.age==='new')return {'primary_release_date.gte':'2019-01-01'};
+  return {};
+};
+const fetchAssistantExactGenrePool=async answers=>{
+  const genreId=selectedGenreId(answers);
+  if(!token||!genreId)return [];
+  const today=new Date().toISOString().slice(0,10);
+  const base={include_adult:'false','primary_release_date.lte':today,sort_by:'popularity.desc','vote_count.gte':'20',with_genres:String(genreId),...assistantYearParams(answers)};
+  const requests=Array.from({length:8},(_,index)=>({...base,page:String(index+1)}));
+  assistantDebug('TMDb exact genre request URLs',{selectedGenreId:genreId,selectedGenreName:genreNames[genreId],urls:requests.map(params=>tmdbUrl('/discover/movie',params).toString())});
+  const responses=await Promise.all(requests.map(params=>tmdb('/discover/movie',params).catch(error=>{
+    console.warn('Movie Match exact genre page failed:',{genreId,error});
+    return {results:[]};
+  })));
+  const fetched=mergeAssistantMovieSets(responses.flatMap(data=>data.results||[]));
+  assistantDebug('TMDb exact genre fetched',{selectedGenreId:genreId,selectedGenreName:genreNames[genreId],count:fetched.length});
+  return fetched;
 };
 const warmAssistantMovieCache=async ({force=false}={})=>{
   const cached=loadAssistantMovieCache();
@@ -2078,9 +2117,13 @@ const renderPosterWall=movies=>{
   currentAssistantRecommendations=[...movies];
   assistantDebug('rendered results',{results:movies.map(movie=>({
     title:normalizeMovie(movie).title,
+    selectedGenreId:selectedGenreId(getAssistantFilters())||null,
+    selectedGenreName:genreNames[selectedGenreId(getAssistantFilters())]||'Any genre',
     poster_path:movie.poster_path||'',
     posterUrl:normalizeMovie(movie).poster,
     genres:movieGenreIds(movie),
+    genreNames:movieGenreIds(movie).map(id=>genreNames[id]||String(id)),
+    passedGenreFilter:movieHasSelectedGenre(movie,getAssistantFilters()),
     year:normalizeMovie(movie).year
   }))});
   movies.forEach(movie=>assistantResults.appendChild(createAssistantCard(movie)));
@@ -2113,6 +2156,23 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   try{
     const needsMoreCache=token&&(cached.length<assistantCacheMinimum||immediate.strictCount<5);
     if(!needsMoreCache)return;
+    assistantReason.textContent=immediate.pool.length?'Fetching more exact genre matches…':'Building exact genre matches…';
+    if(selectedGenreId(answers)&&immediate.strictCount<5){
+      const exactGenreCandidates=await fetchAssistantExactGenrePool(answers);
+      if(requestId!==assistantRenderRequest)return;
+      if(exactGenreCandidates.length){
+        const mergedExact=mergeAssistantMovieSets(cached,exactGenreCandidates);
+        saveAssistantMovieCache(mergeAssistantMovieSets(loadAssistantMovieCache(),mergedExact));
+        const exactPool=getAssistantMoviePool(mergedExact,answers,memory,{different});
+        if(exactPool.pool.length){
+          renderPosterWall(exactPool.pool);
+          assistantReason.textContent=exactPool.usedCloseMatches?
+            `Not enough exact matches. Showing close picks that still match ${genreNames[selectedGenreId(answers)]}.`:
+            (exactPool.exactEnough?assistantExplanation(answers,exactPool.pool.map(normalizeMovie)):closestAssistantExplanation(answers,exactPool.pool.map(normalizeMovie)));
+          if(exactPool.strictCount>=5)return;
+        }
+      }
+    }
     assistantReason.textContent=immediate.pool.length?'Updating recommendations in the background…':'Building a larger movie cache…';
     const candidates=await warmAssistantMovieCache({force:cached.length<assistantCacheMinimum});
     if(requestId!==assistantRenderRequest)return;
