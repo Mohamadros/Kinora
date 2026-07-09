@@ -1,4 +1,4 @@
-# Cinema in the Digital Age
+# Kinora
 
 An interactive Hugo cinema platform for emotional movie discovery, upcoming releases, personal film writing, audience research, and community memories.
 
