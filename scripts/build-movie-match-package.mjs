@@ -1,6 +1,15 @@
 import fs from 'node:fs/promises';
 
-const token = process.env.TMDB_TOKEN;
+const tokenFromHugo = async () => {
+  try {
+    const config = await fs.readFile('hugo.toml', 'utf8');
+    return config.match(/tmdbToken\s*=\s*"([^"]+)"/)?.[1] || '';
+  } catch {
+    return '';
+  }
+};
+
+const token = process.env.TMDB_TOKEN || await tokenFromHugo();
 if (!token) {
   console.error('TMDB_TOKEN is required.');
   process.exit(1);
@@ -58,8 +67,30 @@ const normalizeMovie = movie => {
     vote_average: Number(movie.vote_average || 0),
     vote_count: Number(movie.vote_count || 0),
     popularity: Number(movie.popularity || 0),
-    original_language: movie.original_language || ''
+    original_language: movie.original_language || '',
+    runtime: Number(movie.runtime || 0)
   };
+};
+
+const hydrateRuntime = async movies => {
+  const concurrency = 10;
+  let index = 0;
+  const hydrated = new Map();
+  const worker = async () => {
+    while (index < movies.length) {
+      const movie = movies[index];
+      index += 1;
+      try {
+        const detail = await fetchJson(`/movie/${movie.id}`, {});
+        hydrated.set(movie.id, normalizeMovie({ ...movie, runtime: detail.runtime || 0 }));
+      } catch (error) {
+        console.warn(`Skipped runtime for ${movie.title}: ${error.message}`);
+        hydrated.set(movie.id, movie);
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  return movies.map(movie => hydrated.get(movie.id) || movie);
 };
 
 const byId = new Map();
@@ -77,7 +108,7 @@ for (const strategy of strategies) {
   }
 }
 
-const movies = [...byId.values()].sort((a, b) => b.popularity - a.popularity);
+const movies = (await hydrateRuntime([...byId.values()])).sort((a, b) => b.popularity - a.popularity);
 await fs.mkdir('static/data', { recursive:true });
 await fs.writeFile('static/data/movie-match-candidates.json', JSON.stringify({
   generatedAt: new Date().toISOString(),

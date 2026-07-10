@@ -1417,9 +1417,10 @@ const movieMatchesAge=(movie,age)=>{
 };
 const movieMatchesTime=(movie,time)=>{
   const runtime=Number(movie.runtime||0);
-  if(!runtime||time==='any')return true;
-  if(time==='short')return runtime<=100;
-  if(time==='medium')return runtime>95&&runtime<=140;
+  if(time==='any')return true;
+  if(!runtime)return false;
+  if(time==='short')return runtime<90;
+  if(time==='medium')return runtime>=90&&runtime<=140;
   if(time==='long')return runtime>140;
   return true;
 };
@@ -1640,8 +1641,8 @@ const tasteMemoryScore=(movie,memory)=>{
 const runtimePreferenceScore=(movie,time)=>{
   const runtime=Number(movie.runtime||0);
   if(time==='any'||!runtime)return 0;
-  if(time==='short')return runtime<=100?8:Math.max(-7,(110-runtime)/5);
-  if(time==='medium')return runtime>=95&&runtime<=140?8:Math.max(-7,8-(Math.min(Math.abs(runtime-110),Math.abs(runtime-130))*.25));
+  if(time==='short')return runtime<90?8:Math.max(-7,(95-runtime)/5);
+  if(time==='medium')return runtime>=90&&runtime<=140?8:Math.max(-7,8-(Math.min(Math.abs(runtime-100),Math.abs(runtime-130))*.25));
   if(time==='long')return runtime>140?8:Math.max(-6,(runtime-130)/5);
   return 0;
 };
@@ -1653,10 +1654,10 @@ const genrePreferenceScore=(movie,genre)=>{
 const platformPreferenceScore=(movie,platform)=>normalizePlatform(platform)?(movieMatchesPlatform(movie,platform)?8:-4):0;
 const releasePreferenceScore=(movie,age)=>age==='any'?0:(movieMatchesAge(movie,age)?7:-4);
 const assistantAgeLabels={old:'older classic',modern:'modern classic',new:'newer movie'};
-const assistantTimeLabels={short:'under 100 minutes',medium:'100-140 minutes',long:'over 140 minutes'};
+const assistantTimeLabels={short:'under 90 minutes',medium:'90-140 minutes',long:'over 140 minutes'};
 const assistantDiscoverMaxPages=50;
 const assistantDiscoverBatchSize=20;
-const assistantCacheKey='cinemaMovieMatchCandidateCacheV3';
+const assistantCacheKey='cinemaMovieMatchCandidateCacheV4';
 const assistantStaticPackageUrl=`${siteRoot}data/movie-match-candidates.json`;
 const assistantCacheTtl=24*60*60*1000;
 const assistantCacheMinimum=2000;
@@ -1671,7 +1672,10 @@ const assistantDebug=(label,payload={})=>{
   console.log(message);
   window.movieMatchDebug=[...(window.movieMatchDebug||[]),{label,payload,recordedAt:new Date().toISOString()}].slice(-80);
 };
-const assistantDataSourceLog=(source,payload={})=>assistantDebug('data source',{source,tmdbTokenExists:Boolean(token),...payload});
+const assistantDataSourceLog=(source,payload={})=>{
+  window.movieMatchActiveDataSource=source;
+  assistantDebug('data source',{source,tmdbTokenExists:Boolean(token),...payload});
+};
 const selectedGenreId=answers=>answers.genre==='any'?0:Number(answers.genre||0);
 const debugGenreFilterResult=(movie,answers,context='genre filter')=>{
   const selectedId=selectedGenreId(answers);
@@ -1698,8 +1702,7 @@ const movieHasSelectedPlatform=(movie,answers,memory)=>{
   const platform=normalizePlatform(answers.platform);
   if(!platform)return true;
   if(platform==='library')return true;
-  const values=platformValues(movie);
-  return !values.length||movieMatchesPlatform(movie,answers.platform);
+  return platformValues(movie).length>0&&movieMatchesPlatform(movie,answers.platform);
 };
 const strictAssistantCandidate=(movie,answers,memory)=>{
   const normalized=normalizeMovie(movie);
@@ -1710,8 +1713,46 @@ const strictAssistantCandidate=(movie,answers,memory)=>{
   if(!movieHasSelectedPlatform(movie,answers,memory))return false;
   return true;
 };
+const assistantHasPlatformData=movie=>platformValues(movie).length>0;
+const filterAssistantCandidates=(candidates,answers,memory,{context='filter pipeline'}={})=>{
+  const selectedPlatform=normalizePlatform(answers.platform);
+  const source=uniqueAssistantMovies(candidates).map(movie=>normalizeAssistantCacheMovie(movie)).filter(movie=>normalizeMovie(movie).title);
+  const afterGenre=source.filter(movie=>movieHasSelectedGenre(movie,answers));
+  const afterYear=afterGenre.filter(movie=>movieHasSelectedAge(movie,answers));
+  const afterRuntime=afterYear.filter(movie=>movieHasSelectedRuntime({...normalizeMovie(movie),runtime:movie.runtime},answers));
+  let afterPlatform=afterRuntime;
+  let platformSkipped=false;
+  const platformDataCount=afterRuntime.filter(assistantHasPlatformData).length;
+  if(selectedPlatform&&selectedPlatform!=='library'){
+    if(platformDataCount){
+      afterPlatform=afterRuntime.filter(movie=>movieHasSelectedPlatform(movie,answers,memory));
+    }else{
+      platformSkipped=true;
+      console.info('Platform filter skipped: no platform data available.');
+    }
+  }
+  const counts={
+    dataSource:window.movieMatchActiveDataSource||'unknown',
+    loggedIn:Boolean(currentUserId()),
+    selectedGenreId:selectedGenreId(answers)||null,
+    selectedGenreName:genreNames[selectedGenreId(answers)]||'Any genre',
+    selectedYear:answers.age||'any',
+    selectedRuntime:answers.time||'any',
+    selectedPlatform:answers.platform||'any',
+    candidateCountBeforeFiltering:source.length,
+    countAfterGenreFilter:afterGenre.length,
+    countAfterYearFilter:afterYear.length,
+    countAfterRuntimeFilter:afterRuntime.length,
+    countAfterPlatformFilter:afterPlatform.length,
+    platformDataCount,
+    platformSkipped,
+    libraryCount:Object.keys(memory.items||{}).length
+  };
+  assistantDebug(context,counts);
+  return {movies:afterPlatform,counts};
+};
 const validateAssistantPool=(movies,answers,memory)=>{
-  const valid=movies.filter(movie=>strictAssistantCandidate(movie,answers,memory));
+  const valid=filterAssistantCandidates(movies,answers,memory,{context:'final render filter guard'}).movies;
   if(valid.length!==movies.length){
     assistantDebug('removed invalid results',{answers,removed:movies.filter(movie=>!valid.includes(movie)).map(movie=>normalizeMovie(movie).title)});
   }
@@ -2126,36 +2167,35 @@ const uniqueAssistantMovies=movies=>{
     return true;
   });
 };
-const closeAssistantCandidate=(movie,answers)=>{
-  const normalized=normalizeMovie(movie);
-  if(!normalized.title)return false;
-  if(!movieHasSelectedGenre(normalized,answers))return false;
-  if(!movieHasSelectedAge(normalized,answers))return false;
-  return true;
-};
 const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
-  const source=uniqueAssistantMovies(candidates);
-  const strictSource=source.filter(movie=>strictAssistantCandidate(movie,answers,memory));
-  let usedCloseMatches=false;
-  let scoringSource=strictSource;
-  if(scoringSource.length<5){
-    scoringSource=source.filter(movie=>closeAssistantCandidate(movie,answers));
-    usedCloseMatches=true;
-  }
-  assistantDebug('candidates after strict filtering',{sourceCount:source.length,selectedGenreId:selectedGenreId(answers)||null,selectedGenreName:genreNames[selectedGenreId(answers)]||'Any genre',countBeforeFiltering:source.length,countAfterStrictFiltering:strictSource.length,strictCount:strictSource.length,scoringCount:scoringSource.length,usingFallback:!candidates.length,usedCloseMatches,answers});
-  const ranked=scoringSource
+  const {movies:strictSource,counts}=filterAssistantCandidates(candidates,answers,memory);
+  const ranked=strictSource
     .map(movie=>scoreAssistantMovieDetailed(movie,answers,memory))
     .sort((a,b)=>b.score-a.score);
   const offset=ranked.length>5?(assistantVariant*5)%Math.max(1,ranked.length-4):0;
   const selected=ranked.slice(offset,offset+5).map(item=>item.movie);
-  const pool=usedCloseMatches?selected:validateAssistantPool(selected,answers,memory);
+  const pool=validateAssistantPool(selected,answers,memory);
   const bestScore=ranked[0]?.score||0;
   const fifthScore=ranked[4]?.score||0;
-  return {pool:pool.slice(0,5),exactEnough:!usedCloseMatches&&pool.length>=3&&bestScore>28&&fifthScore>18,ranked,strictCount:strictSource.length,usedCloseMatches};
+  assistantDebug('mood scoring',{
+    countAfterMoodScoring:ranked.length,
+    finalRenderedCount:pool.length,
+    finalResults:pool.map(movie=>({
+      title:normalizeMovie(movie).title,
+      year:normalizeMovie(movie).year,
+      genreIds:movieGenreIds(movie),
+      genreNames:movieGenreIds(movie).map(id=>genreNames[id]||String(id)),
+      passedGenreFilter:movieHasSelectedGenre(movie,answers),
+      score:Number(movie.assistantScore||0).toFixed(2)
+    })),
+    ...counts
+  });
+  return {pool:pool.slice(0,5),exactEnough:pool.length>=3&&bestScore>28&&fifthScore>18,ranked,strictCount:strictSource.length,counts};
 };
 const renderPosterWall=movies=>{
   const answers=getAssistantFilters();
-  const finalMovies=movies.filter(movie=>movieHasSelectedGenre(movie,answers)&&movieHasSelectedAge(movie,answers)&&movieHasSelectedRuntime({...normalizeMovie(movie),runtime:movie.runtime},answers));
+  const memory=getAssistantMemory();
+  const finalMovies=validateAssistantPool(movies,answers,memory);
   if(finalMovies.length!==movies.length){
     assistantDebug('final render guard removed results',{removed:movies.filter(movie=>!finalMovies.includes(movie)).map(movie=>({
       title:normalizeMovie(movie).title,
@@ -2219,12 +2259,10 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   if(immediate.pool.length){
     const rendered=renderPosterWall(immediate.pool);
     assistantReason.textContent=!rendered?
-      `No exact ${genreNames[selectedGenreId(answers)]||'genre'} matches found for these filters.`:
-      immediate.usedCloseMatches?
-      `Not enough strict matches yet, showing close matches while the movie cache updates: ${immediate.pool.map(movie=>normalizeMovie(movie).title).join(', ')}.`:
+      'No exact matches found. Try changing one filter.':
       (immediate.exactEnough?assistantExplanation(answers,immediate.pool.map(normalizeMovie)):closestAssistantExplanation(answers,immediate.pool.map(normalizeMovie)));
   }else if(!assistantResults.children.length){
-    assistantReason.textContent=token?'Building the movie cache. Recommendations will appear here shortly.':'Live movie data is not available. TMDB configuration is missing.';
+    assistantReason.textContent=immediate.strictCount===0?'No exact matches found. Try changing one filter.':(token?'Building the movie cache. Recommendations will appear here shortly.':'Live movie data is not available. TMDB configuration is missing.');
   }else{
     assistantReason.textContent='Updating recommendations…';
   }
@@ -2242,9 +2280,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
         if(exactPool.pool.length){
           const rendered=renderPosterWall(exactPool.pool);
           assistantReason.textContent=!rendered?
-            `No exact ${genreNames[selectedGenreId(answers)]||'genre'} matches found for these filters.`:
-            exactPool.usedCloseMatches?
-            `Not enough exact matches. Showing close picks that still match ${genreNames[selectedGenreId(answers)]}.`:
+            'No exact matches found. Try changing one filter.':
             (exactPool.exactEnough?assistantExplanation(answers,exactPool.pool.map(normalizeMovie)):closestAssistantExplanation(answers,exactPool.pool.map(normalizeMovie)));
           if(exactPool.strictCount>=5)return;
         }
@@ -2253,16 +2289,16 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     assistantReason.textContent=immediate.pool.length?'Updating recommendations in the background…':'Building a larger movie cache…';
     const candidates=await warmAssistantMovieCache({force:cached.length<assistantCacheMinimum});
     if(requestId!==assistantRenderRequest)return;
-    const {pool,exactEnough,usedCloseMatches}=getAssistantMoviePool(candidates,answers,memory,{different});
+    const {pool,exactEnough}=getAssistantMoviePool(candidates,answers,memory,{different});
     const rendered=pool.length?renderPosterWall(pool):false;
-    assistantReason.textContent=pool.length&&rendered?(usedCloseMatches?`Not enough exact matches. Showing close picks that still match ${genreNames[selectedGenreId(answers)]||'the selected genre'}.`:(exactEnough?assistantExplanation(answers,pool.map(normalizeMovie)):closestAssistantExplanation(answers,pool.map(normalizeMovie)))):`No exact matches found for these filters. Try another genre, age, or runtime.`;
+    assistantReason.textContent=pool.length&&rendered?(exactEnough?assistantExplanation(answers,pool.map(normalizeMovie)):closestAssistantExplanation(answers,pool.map(normalizeMovie))):'No exact matches found. Try changing one filter.';
   }catch(error){
     if(requestId!==assistantRenderRequest)return;
     assistantDataSourceLog('fallback',{reason:String(error)});
     const fallbackForCurrentFilters=assistantFallback;
     const {pool}=getAssistantMoviePool(fallbackForCurrentFilters,answers,memory,{different});
     const rendered=pool.length?renderPosterWall(pool):false;
-    assistantReason.textContent=pool.length&&rendered?closestAssistantExplanation(answers,pool.map(normalizeMovie)):`No exact matches found for these filters. Try another genre, age, or runtime.`;
+    assistantReason.textContent=pool.length&&rendered?closestAssistantExplanation(answers,pool.map(normalizeMovie)):'No exact matches found. Try changing one filter.';
   }
   if(scroll)assistantPanel.scrollIntoView({behavior:'smooth',block:'start'});
 };
