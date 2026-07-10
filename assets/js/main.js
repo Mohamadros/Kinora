@@ -957,6 +957,7 @@ const assistantMemory=document.querySelector('[data-decision-memory]');
 const assistantLibrarySearch=document.querySelector('[data-library-search]');
 const assistantRefreshButton=document.querySelector('[data-assistant-refresh]');
 const assistantStorageKey='cinemaDecisionMemory';
+const assistantLastVisibleKey='cinemaMovieMatchLastVisibleWallV1';
 const providerMap={netflix:'8',prime:'119',disney:'337'};
 function normalizePlatform(value){
   const normalized=String(value||'')
@@ -1173,11 +1174,15 @@ const assistantDirectorHints={
 const defaultAssistantMemory=()=>({items:{},ratings:{},saved:[],watched:[],movies:{}});
 const assistantLifecycleOrder={saved:1,watched:2,rated:3};
 const assistantLifecycleLabels={saved:'Saved',watched:'Watched',rated:'Rated'};
+const assistantArrayValue=value=>Array.isArray(value)?value:[];
+const assistantObjectValue=value=>value&&typeof value==='object'&&!Array.isArray(value)?value:{};
 const normalizeAssistantMemory=rawMemory=>{
   const memory={...defaultAssistantMemory(),...(rawMemory||{})};
-  memory.items={...(memory.items||{})};
-  memory.movies={...(memory.movies||{})};
-  memory.ratings={...(memory.ratings||{})};
+  memory.items=assistantObjectValue(memory.items);
+  memory.movies=assistantObjectValue(memory.movies);
+  memory.ratings=assistantObjectValue(memory.ratings);
+  memory.saved=assistantArrayValue(memory.saved);
+  memory.watched=assistantArrayValue(memory.watched);
   const promote=(title,status)=>{
     if(!title)return;
     const current=memory.items[title]?.status||'';
@@ -1198,7 +1203,10 @@ const normalizeAssistantMemory=rawMemory=>{
 };
 const getAssistantMemory=()=>{
   try{return normalizeAssistantMemory(JSON.parse(localStorage.getItem(assistantStorageKey)||'{}'));}
-  catch{return defaultAssistantMemory();}
+  catch(error){
+    console.warn('Kinora library memory was reset after invalid stored data.',error);
+    return defaultAssistantMemory();
+  }
 };
 const assistantMemoryFromRows=rows=>{
   const memory=defaultAssistantMemory();
@@ -2027,6 +2035,44 @@ const saveAssistantMovieCache=movies=>{
     localStorage.setItem(assistantCacheKey,JSON.stringify({version:2,createdAt:Date.now(),expiresAt:Date.now()+assistantCacheTtl,movies:compact}));
   }catch(error){assistantDebug('cache save skipped',{cacheSize:compact.length,message:String(error)});}
 };
+const compactAssistantWallMovie=movie=>{
+  const normalized=normalizeAssistantCacheMovie(movie);
+  return {
+    tmdbId:normalized.tmdbId||normalized.id,
+    id:normalized.id||normalized.tmdbId,
+    title:normalized.title,
+    year:normalized.year,
+    releaseDate:normalized.releaseDate||normalized.release_date,
+    release_date:normalized.releaseDate||normalized.release_date,
+    rating:Number(normalized.rating||normalized.vote_average||normalized.voteAverage||0),
+    voteAverage:Number(normalized.voteAverage||normalized.vote_average||normalized.rating||0),
+    vote_average:Number(normalized.vote_average||normalized.voteAverage||normalized.rating||0),
+    popularity:Number(normalized.popularity||0),
+    overview:String(normalized.overview||'').slice(0,320),
+    poster_path:normalized.poster_path,
+    poster:normalized.poster,
+    genreIds:normalized.genreIds||[],
+    genre:normalized.genre,
+    runtime:Number(normalized.runtime||0),
+    moods:normalized.moods||normalized.moodTags||[],
+    platforms:normalized.platforms||[]
+  };
+};
+const saveLastVisibleAssistantWall=movies=>{
+  if(!movies?.length)return;
+  try{
+    localStorage.setItem(assistantLastVisibleKey,JSON.stringify({createdAt:Date.now(),movies:movies.map(compactAssistantWallMovie)}));
+  }catch(error){assistantDebug('last visible wall save skipped',{message:String(error)});}
+};
+const loadLastVisibleAssistantWall=()=>{
+  try{
+    const stored=JSON.parse(localStorage.getItem(assistantLastVisibleKey)||'{}');
+    return Array.isArray(stored.movies)?stored.movies.map(movie=>normalizeAssistantCacheMovie(movie)).filter(movie=>normalizeMovie(movie).title):[];
+  }catch(error){
+    assistantDebug('last visible wall restore failed',{message:String(error)});
+    return [];
+  }
+};
 const normalizeStaticMoviePackageMovie=movie=>normalizeAssistantCacheMovie({
   ...movie,
   genreIds:movie.genre_ids||movie.genreIds||[],
@@ -2215,7 +2261,9 @@ const recoverAssistantWallFromCandidates=async reason=>{
   const memory=getAssistantMemory();
   const sources=[
     lastVisibleAssistantRecommendations,
+    loadLastVisibleAssistantWall(),
     currentAssistantRecommendations,
+    currentRecommendations,
     assistantMovieCache,
     loadAssistantMovieCache(),
     await loadAssistantStaticPackage(),
@@ -2433,6 +2481,7 @@ const renderPosterWall=(movies,{preserveOnEmpty=false,skipValidation=false}={})=
   assistantResults.innerHTML='';
   setCurrentRecommendations(finalMovies);
   lastVisibleAssistantRecommendations=[...finalMovies];
+  saveLastVisibleAssistantWall(finalMovies);
   assistantDebug('rendered results',{results:finalMovies.map(movie=>({
     title:normalizeMovie(movie).title,
     selectedGenreId:selectedGenreId(answers)||null,
@@ -2476,7 +2525,16 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     assistantReason.textContent='Live movie data is not available. TMDB configuration is missing.';
   }
   assistantDataSourceLog(activeSource,{candidateCount:immediateSource.length,tmdbTokenExists:Boolean(token)});
-  let immediate=getAssistantMoviePool(immediateSource,answers,memory,{different});
+  let immediate;
+  try{
+    immediate=getAssistantMoviePool(immediateSource,answers,memory,{different});
+  }catch(error){
+    assistantDebug('initial scoring failed',{message:String(error),activeSource,...assistantStateCounts()});
+    const fallbackMemory=defaultAssistantMemory();
+    immediateSource=staticSource.length?staticSource:assistantFallback;
+    activeSource=staticSource.length?'static content package':'fallback';
+    immediate=getAssistantMoviePool(immediateSource,answers,fallbackMemory,{different});
+  }
   updateAssistantPersonalizationNote(immediate.profile);
   if(!immediate.pool.length&&cached.length>=5&&!staticSource.length){
     staticSource=await loadAssistantStaticPackage();
@@ -2553,6 +2611,13 @@ assistantForm?.addEventListener('submit',async event=>{
 assistantRefreshButton?.addEventListener('click',()=>updateMovieWall({different:true,scroll:false}));
 document.querySelector('[data-clear-decision-memory]')?.addEventListener('click',()=>{try{localStorage.removeItem(assistantStorageKey);}catch{}updateAssistantMemory();});
 assistantLibrarySearch?.addEventListener('input',updateAssistantMemory);
+if(assistantResults&&window.MutationObserver){
+  new MutationObserver(()=>{
+    if(!assistantPanel||assistantPanel.hidden||assistantWallHasMovieCards())return;
+    const hasEmptyMessage=Boolean(assistantResults.querySelector('.assistant-wall-empty'));
+    if(!hasEmptyMessage)scheduleAssistantWallRecovery('poster grid mutation');
+  }).observe(assistantResults,{childList:true});
+}
 updateAssistantMemory();
 
 const communityForm=document.querySelector('[data-community-form]');
