@@ -67,6 +67,7 @@ const authSwitch=document.querySelector('[data-auth-switch]');
 const authForgot=document.querySelector('[data-auth-forgot]');
 let kinoraSession=null;
 let kinoraProfile=null;
+let authUser=null;
 let kinoraLibraryReady=false;
 let authLoading=false;
 const isSupabaseReady=()=>Boolean(supabaseClient);
@@ -122,6 +123,7 @@ const requireKinoraAuth=message=>{
 };
 const authDisplayName=()=>kinoraProfile?.display_name||kinoraProfile?.username||kinoraSession?.user?.email||'Kinora user';
 const updateAuthUI=()=>{
+  authUser=kinoraSession?.user||null;
   const signedIn=Boolean(currentUserId());
   if(authOpenButton)authOpenButton.hidden=signedIn;
   if(accountMenu)accountMenu.hidden=!signedIn;
@@ -945,6 +947,12 @@ const assistantForm=document.querySelector('[data-decision-form]');
 const assistantResults=document.querySelector('[data-assistant-results]');
 const assistantPanel=document.querySelector('[data-decision-results]');
 const assistantReason=document.querySelector('[data-decision-reason]');
+const assistantPersonalizationNote=assistantReason?document.createElement('small'):null;
+if(assistantPersonalizationNote){
+  assistantPersonalizationNote.className='assistant-personalization-note';
+  assistantPersonalizationNote.hidden=true;
+  assistantReason.insertAdjacentElement('afterend',assistantPersonalizationNote);
+}
 const assistantMemory=document.querySelector('[data-decision-memory]');
 const assistantLibrarySearch=document.querySelector('[data-library-search]');
 const assistantRefreshButton=document.querySelector('[data-assistant-refresh]');
@@ -1091,6 +1099,10 @@ const assistantRatingSources=(title,movie={})=>{
     {label:'Metacritic',url:links.metacritic,icon:'https://cdn.simpleicons.org/metacritic/00CE7C'}
   ];
 };
+const movieIdentityKey=movie=>{
+  const normalized=normalizeMovie(movie||{});
+  return String(movie?.tmdbId||movie?.id||`${normalized.title}-${normalized.year}`).trim().toLowerCase();
+};
 const assistantFallback=[
   {title:'Arrival',year:'2016',runtime:116,rating:7.9,genreIds:[878,18],platforms:['Prime Video','Netflix','My own watchlist'],moods:['thoughtful','curious','inspired','moved'],age:'modern',overview:'A linguist works with the military to communicate with mysterious visitors, changing how she understands time and loss.',genre:'Sci-fi · Drama'},
   {title:'Interstellar',year:'2014',runtime:169,rating:8.7,genreIds:[878,18],platforms:['Amazon Prime Video','Cinema','My own watchlist'],moods:['inspired','thoughtful','moved'],age:'modern',overview:'A group of explorers travel through a wormhole to find humanity a future beyond Earth.',genre:'Sci-fi · Drama'},
@@ -1220,10 +1232,14 @@ const loadSupabaseLibrary=async ()=>{
   if(error){console.warn('Kinora library load failed',error);return;}
   try{localStorage.setItem(assistantStorageKey,JSON.stringify(assistantMemoryFromRows(data)));}catch{}
   kinoraLibraryReady=true;
+  syncUserLibraryState();
   updateAssistantMemory();
 };
 const upsertSupabaseLibraryMovie=async (movie,status,rating=0)=>{
-  if(!supabaseClient||!currentUserId()||!status)return false;
+  if(!supabaseClient||!currentUserId()||!status){
+    lastSupabaseLibraryResult={ok:false,action:'upsert',error:supabaseConfigError||'Supabase unavailable or user not signed in.'};
+    return false;
+  }
   const normalized=normalizeMovie(movie);
   const snapshot=assistantMovieSnapshot(movie);
   const payload={
@@ -1244,18 +1260,24 @@ const upsertSupabaseLibraryMovie=async (movie,status,rating=0)=>{
   };
   const conflict=payload.tmdb_id?'user_id,tmdb_id':'user_id,title,release_year';
   const {error}=await supabaseClient.from('movie_library').upsert(payload,{onConflict:conflict});
+  lastSupabaseLibraryResult={ok:!error,action:'upsert',error:error?String(error.message||error):null};
   if(error){console.warn('Kinora library save failed',error);return false;}
   return true;
 };
 const deleteSupabaseLibraryMovie=async title=>{
-  if(!supabaseClient||!currentUserId())return false;
+  if(!supabaseClient||!currentUserId()){
+    lastSupabaseLibraryResult={ok:false,action:'delete',error:supabaseConfigError||'Supabase unavailable or user not signed in.'};
+    return false;
+  }
   const {error}=await supabaseClient.from('movie_library').delete().eq('user_id',currentUserId()).eq('title',title);
+  lastSupabaseLibraryResult={ok:!error,action:'delete',error:error?String(error.message||error):null};
   if(error){console.warn('Kinora library delete failed',error);return false;}
   return true;
 };
 const setAssistantMemory=memory=>{
   const normalized=normalizeAssistantMemory(memory);
   try{localStorage.setItem(assistantStorageKey,JSON.stringify(normalized));}catch{}
+  syncUserLibraryState();
   updateAssistantMemory();
 };
 const assistantMovieSnapshot=movie=>{
@@ -1290,6 +1312,7 @@ const setAssistantMovieStatus=(memory,movie,status,rating)=>{
     memory.items[normalized.title]={...(memory.items[normalized.title]||{}),status};
   }else{
     delete memory.items[normalized.title];
+    delete memory.movies[normalized.title];
   }
   if(status==='rated'&&Number(rating)>0){
     memory.ratings[normalized.title]=Number(rating);
@@ -1306,7 +1329,7 @@ const findAssistantMovieByTitle=title=>{
     {title,year:'TBA',rating:0,genre:'Film',overview:'Saved from your movie memory. Run the assistant again to refresh full details.',poster:assistantPosterImage(title),trailerQuery:`${title} official trailer`};
 };
 const removeAssistantMemoryItem=(type,title)=>{
-  assistantDebug('library remove before',{title,type,...assistantStateCounts()});
+  assistantDebug('library action before',{actionType:'remove',title,type,supabaseResult:lastSupabaseLibraryResult,...assistantStateCounts()});
   const next=getAssistantMemory();
   next.items={...(next.items||{})};
   next.ratings={...(next.ratings||{})};
@@ -1317,7 +1340,8 @@ const removeAssistantMemoryItem=(type,title)=>{
   setAssistantMemory(next);
   deleteSupabaseLibraryMovie(title).then(savedOnline=>{
     preserveAssistantWall();
-    assistantDebug('library remove after',{title,type,savedOnline,...assistantStateCounts()});
+    if(!assistantWallHasMovieCards())recoverAssistantWallFromCandidates('library remove');
+    assistantDebug('library action after',{actionType:'remove',title,type,savedOnline,supabaseResult:lastSupabaseLibraryResult,...assistantStateCounts()});
   });
 };
 const assistantLibrarySearchText=movie=>{
@@ -1611,33 +1635,108 @@ const ratingTasteWeight=rating=>{
   if(score>0)return -4.2;
   return 0;
 };
-const tasteMemoryScore=(movie,memory)=>{
-  // Taste Memory logic:
-  // 1) A watched movie is stored with genre/mood data.
-  // 2) A 1–10 rating turns that watched movie into a stronger preference signal.
-  // 3) High ratings boost similar genres/moods; low ratings penalize similar genres/moods.
-  // 4) Exact watched titles are penalized so the assistant suggests new choices, not repeats.
+const movieDecade=movie=>{
+  const year=Number(normalizeMovie(movie).year||0);
+  return year?Math.floor(year/10)*10:0;
+};
+const topTasteKeys=weights=>Object.entries(weights).filter(([,weight])=>weight>0).sort((a,b)=>b[1]-a[1]).map(([key])=>Number.isNaN(Number(key))?key:Number(key));
+const computeAssistantTasteProfile=(memory=getAssistantMemory())=>{
   const items=memory.items||{};
-  const watched=new Set([...(memory.watched||[]),...Object.entries(items).filter(([,item])=>['watched','rated'].includes(item.status)).map(([title])=>title)]);
-  const saved=new Set(memory.saved||[]);
+  const favoriteGenreWeights={};
+  const dislikedGenreWeights={};
+  const favoriteMoodWeights={};
+  const favoriteDecadeWeights={};
+  const watchedTmdbIds=new Set();
+  const savedTmdbIds=new Set();
+  const ratedTmdbIds=new Set();
   const rememberedMovies=memory.movies||{};
-  let score=0;
-  if(watched.has(movie.title))score-=6;
-  if(saved.has(movie.title)&&!watched.has(movie.title))score+=.8;
+  const watchedTitles=new Set([...(memory.watched||[]),...Object.entries(items).filter(([,item])=>['watched','rated'].includes(item.status)).map(([title])=>title)]);
+  const savedTitles=new Set(memory.saved||[]);
   Object.entries(rememberedMovies).forEach(([title,remembered])=>{
+    const normalized=normalizeMovie(remembered);
+    const status=items[title]?.status||'';
+    if(!status&&!Number(memory.ratings?.[title]||0))return;
+    const rating=Number(memory.ratings?.[title]||0);
+    const id=movieIdentityKey(remembered);
+    const isWatched=watchedTitles.has(title)||status==='watched'||status==='rated';
+    const isSaved=savedTitles.has(title)||status==='saved';
+    const isRated=rating>0;
+    if(isWatched)watchedTmdbIds.add(id);
+    if(isSaved)savedTmdbIds.add(id);
+    if(isRated)ratedTmdbIds.add(id);
+    const weight=isRated?ratingTasteWeight(rating):(isSaved?1.2:(isWatched?0.35:0));
+    (normalized.genreIds||[]).forEach(genreId=>{
+      if(weight>=0)favoriteGenreWeights[genreId]=(favoriteGenreWeights[genreId]||0)+weight;
+      else dislikedGenreWeights[genreId]=(dislikedGenreWeights[genreId]||0)+Math.abs(weight);
+    });
+    (remembered.moods||remembered.moodTags||[]).forEach(tag=>{
+      if(weight>0)favoriteMoodWeights[tag]=(favoriteMoodWeights[tag]||0)+weight;
+    });
+    const decade=movieDecade(remembered);
+    if(decade&&weight>0)favoriteDecadeWeights[decade]=(favoriteDecadeWeights[decade]||0)+weight;
+  });
+  return {
+    favoriteGenreIds:topTasteKeys(favoriteGenreWeights),
+    favoriteMoodTags:topTasteKeys(favoriteMoodWeights),
+    favoriteDecades:topTasteKeys(favoriteDecadeWeights),
+    dislikedGenreIds:topTasteKeys(dislikedGenreWeights),
+    watchedTmdbIds,
+    savedTmdbIds,
+    ratedTmdbIds,
+    favoriteGenreWeights,
+    dislikedGenreWeights,
+    favoriteMoodWeights,
+    favoriteDecadeWeights,
+    watchedTitles,
+    savedTitles
+  };
+};
+const personalizeAssistantMovie=(movie,memory,profile=computeAssistantTasteProfile(memory))=>{
+  const normalized=normalizeMovie(movie);
+  const candidateId=movieIdentityKey(movie);
+  let score=0;
+  const reasons=[];
+  if(profile.watchedTmdbIds.has(candidateId)||profile.watchedTitles.has(normalized.title)){
+    score-=16;
+  }else if(profile.savedTmdbIds.has(candidateId)||profile.savedTitles.has(normalized.title)){
+    score-=4;
+  }
+  (normalized.genreIds||[]).forEach(genreId=>{
+    const favoriteWeight=Number(profile.favoriteGenreWeights[genreId]||0);
+    const dislikedWeight=Number(profile.dislikedGenreWeights[genreId]||0);
+    if(favoriteWeight>0){
+      score+=Math.min(18,favoriteWeight*1.7);
+      reasons.push(genreNames[genreId]||'a favorite genre');
+    }
+    if(dislikedWeight>0)score-=Math.min(14,dislikedWeight*2.1);
+  });
+  (movie.moods||movie.moodTags||[]).forEach(tag=>{
+    const weight=Number(profile.favoriteMoodWeights[tag]||0);
+    if(weight>0){
+      score+=Math.min(9,weight*1.2);
+      reasons.push(`${tag} films`);
+    }
+  });
+  const decade=movieDecade(movie);
+  if(decade&&profile.favoriteDecadeWeights[decade]){
+    score+=Math.min(5,profile.favoriteDecadeWeights[decade]*.7);
+    reasons.push(`${decade}s films`);
+  }
+  const rememberedMovies=memory.movies||{};
+  Object.entries(rememberedMovies).forEach(([title,remembered])=>{
+    if(!memory.items?.[title]&&!Number(memory.ratings?.[title]||0))return;
     const similarity=movieSimilarityScore(movie,remembered);
     if(!similarity)return;
     const rating=Number(memory.ratings?.[title]||0);
     if(rating>0){
-      score+=similarity*ratingTasteWeight(rating);
-    }else if(watched.has(title)){
-      score+=similarity*.35;
-    }else if(saved.has(title)){
-      score+=similarity*.18;
+      score+=similarity*ratingTasteWeight(rating)*.55;
+    }else if(profile.savedTitles.has(title)){
+      score+=similarity*.25;
     }
   });
-  return score;
+  return {score,reasons:[...new Set(reasons)].slice(0,3),profile};
 };
+const tasteMemoryScore=(movie,memory)=>personalizeAssistantMovie(movie,memory).score;
 const runtimePreferenceScore=(movie,time)=>{
   const runtime=Number(movie.runtime||0);
   if(time==='any'||!runtime)return 0;
@@ -1654,7 +1753,7 @@ const genrePreferenceScore=(movie,genre)=>{
 const platformPreferenceScore=(movie,platform)=>normalizePlatform(platform)?(movieMatchesPlatform(movie,platform)?8:-4):0;
 const releasePreferenceScore=(movie,age)=>age==='any'?0:(movieMatchesAge(movie,age)?7:-4);
 const assistantAgeLabels={old:'older classic',modern:'modern classic',new:'newer movie'};
-const assistantTimeLabels={short:'under 90 minutes',medium:'90-140 minutes',long:'over 140 minutes'};
+const assistantTimeLabels={short:'Under 90 minutes',medium:'90–140 minutes',long:'More than 140 minutes'};
 const assistantDiscoverMaxPages=50;
 const assistantDiscoverBatchSize=20;
 const assistantCacheKey='cinemaMovieMatchCandidateCacheV5';
@@ -1668,6 +1767,32 @@ let currentAssistantRecommendations=[];
 let lastVisibleAssistantRecommendations=[];
 let assistantStaticPackageCache=null;
 let assistantStaticPackagePromise=null;
+let movieCandidates=assistantMovieCache;
+let currentRecommendations=currentAssistantRecommendations;
+let userLibrary=defaultAssistantMemory();
+let savedMovies=[];
+let watchedMovies=[];
+let ratedMovies={};
+let lastSupabaseLibraryResult={ok:null,action:'none',error:null};
+const syncUserLibraryState=()=>{
+  userLibrary=getAssistantMemory();
+  savedMovies=[...(userLibrary.saved||[])];
+  watchedMovies=[...(userLibrary.watched||[])];
+  ratedMovies={...(userLibrary.ratings||{})};
+  return userLibrary;
+};
+const setMovieCandidates=movies=>{
+  assistantMovieCache=uniqueAssistantMovies((movies||[]).map(movie=>normalizeAssistantCacheMovie(movie)));
+  movieCandidates=assistantMovieCache;
+  window.movieCandidates=movieCandidates;
+  return assistantMovieCache;
+};
+const setCurrentRecommendations=movies=>{
+  currentAssistantRecommendations=[...(movies||[])];
+  currentRecommendations=currentAssistantRecommendations;
+  window.currentRecommendations=currentRecommendations;
+  return currentAssistantRecommendations;
+};
 const assistantDebug=(label,payload={})=>{
   const message=`Movie Match ${label}: ${JSON.stringify(payload)}`;
   console.log(message);
@@ -1759,48 +1884,65 @@ const validateAssistantPool=(movies,answers,memory)=>{
   }
   return valid;
 };
-const scoreAssistantMovieDetailed=(movie,answers,memory)=>{
+const scoreAssistantMovieDetailed=(movie,answers,memory,profile=computeAssistantTasteProfile(memory))=>{
   const normalized=normalizeMovie(movie);
   const reasons=[];
-  let score=Number(normalized.rating||movie.vote_average||0)*1.4+Math.min(Number(movie.popularity||0),100)*.12;
-  if(curatedAssistantTitles.has(normalized.title))score+=14;
+  let baseScore=Number(normalized.rating||movie.vote_average||0)*1.4+Math.min(Number(movie.popularity||0),100)*.12;
+  if(curatedAssistantTitles.has(normalized.title))baseScore+=14;
   const genreId=selectedGenreId(answers);
   if(genreId){
-    score+=30;
+    baseScore+=30;
     reasons.push(genreNames[genreId]||'selected genre');
   }
   if(answers.age!=='any'){
-    score+=18;
+    baseScore+=18;
     reasons.push(assistantAgeLabels[answers.age]);
   }
   if(answers.time!=='any'){
-    score+=12;
+    baseScore+=12;
     reasons.push(assistantTimeLabels[answers.time]);
   }
   const platform=normalizePlatform(answers.platform);
   if(platform&&platform!=='library'){
     const platformKnown=platformValues(movie).length>0;
-    if(movieMatchesPlatform(movie,answers.platform)){score+=10;reasons.push(`${answers.platform} availability`);}
-    else if(platformKnown)score-=10;
+    if(movieMatchesPlatform(movie,answers.platform)){baseScore+=10;reasons.push(`${answers.platform} availability`);}
+    else if(platformKnown)baseScore-=10;
   }else if(platform==='library'){
     const title=normalized.title;
     if(memory.items?.[title]||memory.movies?.[title]){
-      score+=8;
+      baseScore+=8;
       reasons.push('your library');
     }
   }
   const moodScore=moodTransitionScore(movie,answers);
-  score+=moodScore*1.65;
+  baseScore+=moodScore*1.65;
   if(answers.currentMood!=='any'||answers.targetMood!=='any'){
     const path=[answers.currentMood,answers.targetMood].filter(value=>value&&value!=='any').join(' to ');
     reasons.push(`${path} mood path`);
   }
-  const memoryScore=tasteMemoryScore(movie,memory);
-  score+=memoryScore;
-  if(memoryScore>=3)reasons.push('your library history');
-  return {movie:{...movie,assistantScore:score,assistantReason:assistantMovieReason(answers,reasons)},score,reasons};
+  const personalization=personalizeAssistantMovie(movie,memory,profile);
+  if(personalization.score>=3)reasons.push('your Kinora library');
+  const score=baseScore+personalization.score;
+  return {
+    movie:{
+      ...movie,
+      assistantScore:score,
+      assistantBaseScore:baseScore,
+      assistantPersonalizationScore:personalization.score,
+      assistantReason:assistantMovieReason(answers,reasons),
+      assistantPersonalReason:assistantPersonalReason(personalization.reasons)
+    },
+    score,
+    baseScore,
+    personalizationScore:personalization.score,
+    reasons
+  };
 };
 const scoreAssistantMovie=(movie,answers,memory)=>scoreAssistantMovieDetailed(movie,answers,memory).score;
+const assistantPersonalReason=reasons=>{
+  const cleaned=[...new Set((reasons||[]).filter(Boolean))].slice(0,3);
+  return cleaned.length?`Because you liked: ${cleaned.join(', ')}`:'';
+};
 const assistantMovieReason=(answers,reasons=[])=>{
   const cleaned=[...new Set(reasons.filter(Boolean))].slice(0,4);
   if(!cleaned.length)return 'Recommended as one of the strongest overall matches.';
@@ -1817,6 +1959,12 @@ const assistantExplanation=(answers,movies)=>{
 const closestAssistantExplanation=(answers,movies)=>{
   const titles=movies.map(movie=>movie.title).join(', ');
   return `Closest strict matches for ${answers.currentMood} → ${answers.targetMood}. Genre and release-era filters stay enforced while the engine ranks the best remaining mood matches: ${titles}.`;
+};
+const updateAssistantPersonalizationNote=(profile=computeAssistantTasteProfile(getAssistantMemory()))=>{
+  if(!assistantPersonalizationNote)return;
+  const active=profile.favoriteGenreIds.length||profile.favoriteMoodTags.length||profile.favoriteDecades.length||profile.dislikedGenreIds.length||profile.watchedTmdbIds.size||profile.savedTmdbIds.size||profile.ratedTmdbIds.size;
+  assistantPersonalizationNote.hidden=!active;
+  assistantPersonalizationNote.textContent=active?'Personalized using your Kinora library':'';
 };
 const assistantCacheKeyForMovie=movie=>String(movie.tmdbId||movie.id||`${movie.title}-${movie.year||movie.release_date||''}`).toLowerCase();
 const normalizeAssistantCacheMovie=(rawMovie,platform='')=>{
@@ -1843,7 +1991,7 @@ const loadAssistantMovieCache=()=>{
       const restored=cached.movies.map(movie=>normalizeAssistantCacheMovie(movie));
       const usable=restored.filter(movie=>movie.title&&movieGenreIds(movie).length&&Number(movie.runtime||0)>0);
       if(usable.length>=Math.min(5,restored.length)){
-        assistantMovieCache=usable;
+        setMovieCandidates(usable);
         assistantDebug('cache restored',{cacheSize:assistantMovieCache.length,expiresAt:cached.expiresAt});
       }else{
         localStorage.removeItem(assistantCacheKey);
@@ -1854,7 +2002,7 @@ const loadAssistantMovieCache=()=>{
   return assistantMovieCache;
 };
 const saveAssistantMovieCache=movies=>{
-  assistantMovieCache=movies;
+  setMovieCandidates(movies);
   const compact=movies.map(movie=>({
     tmdbId:movie.tmdbId||movie.id,
     id:movie.id||movie.tmdbId,
@@ -1899,6 +2047,7 @@ const loadAssistantStaticPackage=async ()=>{
     .then(packageData=>{
       const movies=(packageData.movies||[]).map(normalizeStaticMoviePackageMovie).filter(movie=>movie.title&&movieGenreIds(movie).length);
       assistantStaticPackageCache=mergeAssistantMovieSets(movies);
+      if(!movieCandidates.length)setMovieCandidates(assistantStaticPackageCache);
       assistantDataSourceLog('static content package',{candidateCount:assistantStaticPackageCache.length,packageCount:packageData.count||movies.length});
       return assistantStaticPackageCache;
     })
@@ -1986,9 +2135,9 @@ const warmAssistantMovieCache=async ({force=false}={})=>{
     if(!token){
       assistantDataSourceLog('static content package',{reason:'missing TMDb token'});
       const staticMovies=await loadAssistantStaticPackage();
-      if(staticMovies.length)return staticMovies;
+      if(staticMovies.length){setMovieCandidates(staticMovies);return staticMovies;}
       assistantDataSourceLog('fallback',{reason:'missing TMDb token and static package unavailable'});
-      return assistantFallback.map(movie=>normalizeAssistantCacheMovie(movie));
+      return setMovieCandidates(assistantFallback.map(movie=>normalizeAssistantCacheMovie(movie)));
     }
     assistantDataSourceLog('TMDB',{status:'fetching',tmdbTokenExists:Boolean(token)});
     assistantDebug('cache fetch status',{status:'fetching',currentSize:cached.length,target:assistantCacheTarget});
@@ -2001,11 +2150,11 @@ const warmAssistantMovieCache=async ({force=false}={})=>{
   })().catch(error=>{
     assistantDebug('cache fetch status',{status:'failed',message:String(error)});
     const restored=loadAssistantMovieCache();
-    if(restored.length){assistantDataSourceLog('cache',{candidateCount:restored.length,reason:'TMDb fetch failed'});return restored;}
+    if(restored.length){setMovieCandidates(restored);assistantDataSourceLog('cache',{candidateCount:restored.length,reason:'TMDb fetch failed'});return restored;}
     return loadAssistantStaticPackage().then(staticMovies=>{
-      if(staticMovies.length){assistantDataSourceLog('static content package',{candidateCount:staticMovies.length,reason:'TMDb fetch failed'});return staticMovies;}
+      if(staticMovies.length){setMovieCandidates(staticMovies);assistantDataSourceLog('static content package',{candidateCount:staticMovies.length,reason:'TMDb fetch failed'});return staticMovies;}
       assistantDataSourceLog('fallback',{reason:'TMDb fetch and static package failed'});
-      return assistantFallback.map(movie=>normalizeAssistantCacheMovie(movie));
+      return setMovieCandidates(assistantFallback.map(movie=>normalizeAssistantCacheMovie(movie)));
     });
   }).finally(()=>{assistantCachePromise=null;});
   return assistantCachePromise;
@@ -2043,9 +2192,13 @@ const communityReviewUrlForMovie=movie=>{
   return `${siteRoot}journal/?review=${title}#community`;
 };
 const assistantStateCounts=()=>({
-  candidateCount:assistantMovieCache.length||loadAssistantMovieCache().length||assistantFallback.length,
-  recommendationCount:assistantResults?.querySelectorAll('.wall-poster').length||currentAssistantRecommendations.length||0,
-  libraryCount:Object.keys(getAssistantMemory().items||{}).length
+  movieCandidatesCount:movieCandidates.length||assistantMovieCache.length||loadAssistantMovieCache().length||assistantFallback.length,
+  currentRecommendationsCount:assistantResults?.querySelectorAll('.wall-poster').length||currentRecommendations.length||currentAssistantRecommendations.length||0,
+  userLibraryCount:Object.keys(syncUserLibraryState().items||{}).length,
+  savedCount:savedMovies.length,
+  watchedCount:watchedMovies.length,
+  ratedCount:Object.keys(ratedMovies||{}).filter(title=>Number(ratedMovies[title])>0).length,
+  authUser:Boolean(authUser||currentUserId())
 });
 const assistantWallHasMovieCards=()=>!!assistantResults?.querySelector('.wall-poster');
 const showAssistantWallEmpty=message=>{
@@ -2054,7 +2207,7 @@ const showAssistantWallEmpty=message=>{
   empty.className='assistant-wall-empty';
   empty.textContent=message;
   assistantResults.replaceChildren(empty);
-  currentAssistantRecommendations=[];
+  setCurrentRecommendations([]);
 };
 const recoverAssistantWallFromCandidates=async reason=>{
   if(!assistantResults||assistantWallHasMovieCards())return true;
@@ -2096,8 +2249,8 @@ const preserveAssistantWall=()=>{
 };
 const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false})=>{
   const normalized=normalizeMovie(movie);
-  const before=assistantStateCounts();
-  assistantDebug('library mutation before',{title:normalized.title,status,rating,remove,...before});
+  const actionType=remove?'remove':(status==='rated'?'rate':status);
+  assistantDebug('library action before',{actionType,title:normalized.title,status,rating,remove,supabaseResult:lastSupabaseLibraryResult,...assistantStateCounts()});
   const next=getAssistantMemory();
   setAssistantMemory(setAssistantMovieStatus(next,movie,remove?'':status,rating));
   let savedOnline=false;
@@ -2105,10 +2258,11 @@ const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false})=>{
     savedOnline=remove?await deleteSupabaseLibraryMovie(normalized.title):await upsertSupabaseLibraryMovie(movie,status,rating);
   }catch(error){
     console.warn('Kinora library mutation failed',error);
+    lastSupabaseLibraryResult={ok:false,action:remove?'delete':'upsert',error:String(error.message||error)};
   }
   preserveAssistantWall();
-  await recoverAssistantWallFromCandidates('library mutation');
-  assistantDebug('library mutation after',{title:normalized.title,status,rating,remove,savedOnline,...assistantStateCounts()});
+  if(!assistantWallHasMovieCards())await recoverAssistantWallFromCandidates('library mutation');
+  assistantDebug('library action after',{actionType,title:normalized.title,status,rating,remove,savedOnline,supabaseResult:lastSupabaseLibraryResult,...assistantStateCounts()});
 };
 const openMovieDetails=async movie=>{
   const normalized=normalizeMovie(movie);
@@ -2199,7 +2353,8 @@ const createAssistantCard=rawMovie=>{
   poster.dataset.runtime=String(rawMovie.runtime||0);
   const image=document.createElement('img'); image.src=movie.poster||assistantPosterImage(movie.title); image.alt=`Poster for ${movie.title}`; image.loading='lazy'; image.decoding='async'; image.addEventListener('error',()=>{image.src=assistantPosterFallback(movie.title)},{once:true});
   const reason=rawMovie.assistantReason||'Recommended for your selected filters.';
-  const overlay=document.createElement('span'); overlay.className='wall-poster-overlay'; overlay.innerHTML=`<strong>${movie.title}</strong><small>${escapeHTML(reason)}</small>`;
+  const personalReason=rawMovie.assistantPersonalReason?`<small class="assistant-personal-reason">${escapeHTML(rawMovie.assistantPersonalReason)}</small>`:'';
+  const overlay=document.createElement('span'); overlay.className='wall-poster-overlay'; overlay.innerHTML=`<strong>${movie.title}</strong><small>${escapeHTML(reason)}</small>${personalReason}`;
   poster.append(image,overlay); poster.addEventListener('click',()=>openMovieDetails({...rawMovie,...movie}));
   return poster;
 };
@@ -2218,8 +2373,9 @@ const uniqueAssistantMovies=movies=>{
 };
 const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
   const {movies:strictSource,counts}=filterAssistantCandidates(candidates,answers,memory);
+  const profile=computeAssistantTasteProfile(memory);
   const ranked=strictSource
-    .map(movie=>scoreAssistantMovieDetailed(movie,answers,memory))
+    .map(movie=>scoreAssistantMovieDetailed(movie,answers,memory,profile))
     .sort((a,b)=>b.score-a.score);
   const offset=ranked.length>5?(assistantVariant*5)%Math.max(1,ranked.length-4):0;
   const selected=ranked.slice(offset,offset+5).map(item=>item.movie);
@@ -2235,11 +2391,22 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
       genreIds:movieGenreIds(movie),
       genreNames:movieGenreIds(movie).map(id=>genreNames[id]||String(id)),
       passedGenreFilter:movieHasSelectedGenre(movie,answers),
+      baseScore:Number(movie.assistantBaseScore||0).toFixed(2),
+      personalizationScore:Number(movie.assistantPersonalizationScore||0).toFixed(2),
       score:Number(movie.assistantScore||0).toFixed(2)
     })),
+    tasteProfile:{
+      favoriteGenreIds:profile.favoriteGenreIds.slice(0,8),
+      favoriteMoodTags:profile.favoriteMoodTags.slice(0,8),
+      favoriteDecades:profile.favoriteDecades.slice(0,6),
+      dislikedGenreIds:profile.dislikedGenreIds.slice(0,8),
+      watchedTmdbIds:[...profile.watchedTmdbIds].slice(0,12),
+      savedTmdbIds:[...profile.savedTmdbIds].slice(0,12),
+      ratedTmdbIds:[...profile.ratedTmdbIds].slice(0,12)
+    },
     ...counts
   });
-  return {pool:pool.slice(0,5),exactEnough:pool.length>=3&&bestScore>28&&fifthScore>18,ranked,strictCount:strictSource.length,counts};
+  return {pool:pool.slice(0,5),exactEnough:pool.length>=3&&bestScore>28&&fifthScore>18,ranked,strictCount:strictSource.length,counts,profile};
 };
 const renderPosterWall=(movies,{preserveOnEmpty=false,skipValidation=false}={})=>{
   const answers=getAssistantFilters();
@@ -2264,7 +2431,7 @@ const renderPosterWall=(movies,{preserveOnEmpty=false,skipValidation=false}={})=
     return false;
   }
   assistantResults.innerHTML='';
-  currentAssistantRecommendations=[...finalMovies];
+  setCurrentRecommendations(finalMovies);
   lastVisibleAssistantRecommendations=[...finalMovies];
   assistantDebug('rendered results',{results:finalMovies.map(movie=>({
     title:normalizeMovie(movie).title,
@@ -2310,6 +2477,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   }
   assistantDataSourceLog(activeSource,{candidateCount:immediateSource.length,tmdbTokenExists:Boolean(token)});
   let immediate=getAssistantMoviePool(immediateSource,answers,memory,{different});
+  updateAssistantPersonalizationNote(immediate.profile);
   if(!immediate.pool.length&&cached.length>=5&&!staticSource.length){
     staticSource=await loadAssistantStaticPackage();
     if(requestId!==assistantRenderRequest)return;
@@ -2323,6 +2491,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   assistantDebug('selected filters',{answers,dataSource:activeSource,cacheSize:cached.length,staticCount:staticSource.length,filtersChanged,different});
   if(immediate.pool.length){
     const rendered=renderPosterWall(immediate.pool);
+    updateAssistantPersonalizationNote(immediate.profile);
     assistantReason.textContent=!rendered?
       'No exact matches found. Try changing one filter.':
       (immediate.exactEnough?assistantExplanation(answers,immediate.pool.map(normalizeMovie)):closestAssistantExplanation(answers,immediate.pool.map(normalizeMovie)));
@@ -2345,6 +2514,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
         const mergedExact=mergeAssistantMovieSets(cached,exactGenreCandidates);
         saveAssistantMovieCache(mergeAssistantMovieSets(loadAssistantMovieCache(),mergedExact));
         const exactPool=getAssistantMoviePool(mergedExact,answers,memory,{different});
+        updateAssistantPersonalizationNote(exactPool.profile);
         if(exactPool.pool.length){
           const rendered=renderPosterWall(exactPool.pool);
           assistantReason.textContent=!rendered?
@@ -2357,7 +2527,8 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     assistantReason.textContent=immediate.pool.length?'Updating recommendations in the background…':'Building a larger movie cache…';
     const candidates=await warmAssistantMovieCache({force:cached.length<assistantCacheMinimum});
     if(requestId!==assistantRenderRequest)return;
-    const {pool,exactEnough}=getAssistantMoviePool(candidates,answers,memory,{different});
+    const {pool,exactEnough,profile}=getAssistantMoviePool(candidates,answers,memory,{different});
+    updateAssistantPersonalizationNote(profile);
     const rendered=pool.length?renderPosterWall(pool):false;
     assistantReason.textContent=pool.length&&rendered?(exactEnough?assistantExplanation(answers,pool.map(normalizeMovie)):closestAssistantExplanation(answers,pool.map(normalizeMovie))):'No exact matches found. Try changing one filter.';
     if(!rendered)await recoverAssistantWallFromCandidates('update movie wall');
@@ -2365,7 +2536,8 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     if(requestId!==assistantRenderRequest)return;
     assistantDataSourceLog('fallback',{reason:String(error)});
     const fallbackForCurrentFilters=assistantFallback;
-    const {pool}=getAssistantMoviePool(fallbackForCurrentFilters,answers,memory,{different});
+    const {pool,profile}=getAssistantMoviePool(fallbackForCurrentFilters,answers,memory,{different});
+    updateAssistantPersonalizationNote(profile);
     const rendered=pool.length?renderPosterWall(pool):false;
     assistantReason.textContent=pool.length&&rendered?closestAssistantExplanation(answers,pool.map(normalizeMovie)):'No exact matches found. Try changing one filter.';
     if(!rendered)await recoverAssistantWallFromCandidates('update movie wall error');
