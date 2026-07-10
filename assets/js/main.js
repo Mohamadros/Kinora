@@ -1657,7 +1657,7 @@ const assistantAgeLabels={old:'older classic',modern:'modern classic',new:'newer
 const assistantTimeLabels={short:'under 90 minutes',medium:'90-140 minutes',long:'over 140 minutes'};
 const assistantDiscoverMaxPages=50;
 const assistantDiscoverBatchSize=20;
-const assistantCacheKey='cinemaMovieMatchCandidateCacheV4';
+const assistantCacheKey='cinemaMovieMatchCandidateCacheV5';
 const assistantStaticPackageUrl=`${siteRoot}data/movie-match-candidates.json`;
 const assistantCacheTtl=24*60*60*1000;
 const assistantCacheMinimum=2000;
@@ -1840,8 +1840,15 @@ const loadAssistantMovieCache=()=>{
   try{
     const cached=JSON.parse(localStorage.getItem(assistantCacheKey)||'{}');
     if(cached.expiresAt>Date.now()&&Array.isArray(cached.movies)){
-      assistantMovieCache=cached.movies.map(movie=>normalizeAssistantCacheMovie(movie));
-      assistantDebug('cache restored',{cacheSize:assistantMovieCache.length,expiresAt:cached.expiresAt});
+      const restored=cached.movies.map(movie=>normalizeAssistantCacheMovie(movie));
+      const usable=restored.filter(movie=>movie.title&&movieGenreIds(movie).length&&Number(movie.runtime||0)>0);
+      if(usable.length>=Math.min(5,restored.length)){
+        assistantMovieCache=usable;
+        assistantDebug('cache restored',{cacheSize:assistantMovieCache.length,expiresAt:cached.expiresAt});
+      }else{
+        localStorage.removeItem(assistantCacheKey);
+        assistantDebug('cache ignored',{reason:'missing genre or runtime data',cacheSize:restored.length,usableCount:usable.length});
+      }
     }
   }catch(error){assistantDebug('cache restore failed',{message:String(error)});}
   return assistantMovieCache;
@@ -2037,15 +2044,55 @@ const communityReviewUrlForMovie=movie=>{
 };
 const assistantStateCounts=()=>({
   candidateCount:assistantMovieCache.length||loadAssistantMovieCache().length||assistantFallback.length,
-  recommendationCount:assistantResults?.children.length||currentAssistantRecommendations.length||0,
+  recommendationCount:assistantResults?.querySelectorAll('.wall-poster').length||currentAssistantRecommendations.length||0,
   libraryCount:Object.keys(getAssistantMemory().items||{}).length
 });
+const assistantWallHasMovieCards=()=>!!assistantResults?.querySelector('.wall-poster');
+const showAssistantWallEmpty=message=>{
+  if(!assistantResults)return;
+  const empty=document.createElement('p');
+  empty.className='assistant-wall-empty';
+  empty.textContent=message;
+  assistantResults.replaceChildren(empty);
+  currentAssistantRecommendations=[];
+};
+const recoverAssistantWallFromCandidates=async reason=>{
+  if(!assistantResults||assistantWallHasMovieCards())return true;
+  const answers=getAssistantFilters();
+  const memory=getAssistantMemory();
+  const sources=[
+    lastVisibleAssistantRecommendations,
+    currentAssistantRecommendations,
+    assistantMovieCache,
+    loadAssistantMovieCache(),
+    await loadAssistantStaticPackage(),
+    assistantFallback
+  ];
+  for(const source of sources){
+    if(!source?.length)continue;
+    const {pool}=getAssistantMoviePool(source,answers,memory,{different:true});
+    if(pool.length&&renderPosterWall(pool,{preserveOnEmpty:true})){
+      assistantDebug('recovered empty wall',{reason,recoveredCount:pool.length});
+      return true;
+    }
+  }
+  showAssistantWallEmpty('No exact matches found. Try changing one filter.');
+  assistantDebug('empty wall recovery failed',{reason,...assistantStateCounts()});
+  return false;
+};
+let assistantRecoveryTimer=0;
+const scheduleAssistantWallRecovery=reason=>{
+  if(!assistantPanel||assistantPanel.hidden||assistantWallHasMovieCards())return;
+  clearTimeout(assistantRecoveryTimer);
+  assistantRecoveryTimer=setTimeout(()=>{recoverAssistantWallFromCandidates(reason);},120);
+};
 const preserveAssistantWall=()=>{
   if(!assistantResults)return;
-  if(!assistantResults.children.length&&lastVisibleAssistantRecommendations.length){
+  if(!assistantWallHasMovieCards()&&lastVisibleAssistantRecommendations.length){
     assistantDebug('restoring visible recommendations',{...assistantStateCounts(),restoredCount:lastVisibleAssistantRecommendations.length});
     renderPosterWall(lastVisibleAssistantRecommendations,{skipValidation:true});
   }
+  scheduleAssistantWallRecovery('preserve wall');
 };
 const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false})=>{
   const normalized=normalizeMovie(movie);
@@ -2060,6 +2107,7 @@ const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false})=>{
     console.warn('Kinora library mutation failed',error);
   }
   preserveAssistantWall();
+  await recoverAssistantWallFromCandidates('library mutation');
   assistantDebug('library mutation after',{title:normalized.title,status,rating,remove,savedOnline,...assistantStateCounts()});
 };
 const openMovieDetails=async movie=>{
@@ -2207,10 +2255,11 @@ const renderPosterWall=(movies,{preserveOnEmpty=false,skipValidation=false}={})=
   if(!finalMovies.length){
     if(preserveOnEmpty&&lastVisibleAssistantRecommendations.length){
       assistantDebug('kept previous recommendations after empty guard',{candidateCount:movies.length,previousCount:lastVisibleAssistantRecommendations.length});
+      scheduleAssistantWallRecovery('empty guard preserved previous wall');
       return false;
     }
-    assistantResults.innerHTML='';
-    currentAssistantRecommendations=[];
+    showAssistantWallEmpty('No exact matches found. Try changing one filter.');
+    scheduleAssistantWallRecovery('render empty guard');
     assistantDebug('render empty after final guard',{candidateCount:movies.length,selectedGenreId:selectedGenreId(answers)||null,selectedGenreName:genreNames[selectedGenreId(answers)]||'Any genre'});
     return false;
   }
@@ -2241,7 +2290,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   lastAssistantFilterSignature=filterSignature;
   assistantPanel.hidden=false; assistantPanel.classList.add('is-visible');
   const cached=loadAssistantMovieCache();
-  const staticSource=cached.length>=5?[]:await loadAssistantStaticPackage();
+  let staticSource=cached.length>=5?[]:await loadAssistantStaticPackage();
   if(requestId!==assistantRenderRequest)return;
   let immediateSource=[];
   let activeSource='fallback';
@@ -2260,21 +2309,34 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     assistantReason.textContent='Live movie data is not available. TMDB configuration is missing.';
   }
   assistantDataSourceLog(activeSource,{candidateCount:immediateSource.length,tmdbTokenExists:Boolean(token)});
-  const immediate=getAssistantMoviePool(immediateSource,answers,memory,{different});
+  let immediate=getAssistantMoviePool(immediateSource,answers,memory,{different});
+  if(!immediate.pool.length&&cached.length>=5&&!staticSource.length){
+    staticSource=await loadAssistantStaticPackage();
+    if(requestId!==assistantRenderRequest)return;
+  }
+  if(!immediate.pool.length&&staticSource.length&&immediateSource!==staticSource){
+    assistantDataSourceLog('static content package',{candidateCount:staticSource.length,reason:'cache produced no exact matches'});
+    immediateSource=staticSource;
+    activeSource='static content package';
+    immediate=getAssistantMoviePool(immediateSource,answers,memory,{different});
+  }
   assistantDebug('selected filters',{answers,dataSource:activeSource,cacheSize:cached.length,staticCount:staticSource.length,filtersChanged,different});
   if(immediate.pool.length){
     const rendered=renderPosterWall(immediate.pool);
     assistantReason.textContent=!rendered?
       'No exact matches found. Try changing one filter.':
       (immediate.exactEnough?assistantExplanation(answers,immediate.pool.map(normalizeMovie)):closestAssistantExplanation(answers,immediate.pool.map(normalizeMovie)));
-  }else if(!assistantResults.children.length){
+  }else if(!assistantWallHasMovieCards()){
     assistantReason.textContent=immediate.strictCount===0?'No exact matches found. Try changing one filter.':(token?'Building the movie cache. Recommendations will appear here shortly.':'Live movie data is not available. TMDB configuration is missing.');
   }else{
     assistantReason.textContent='Updating recommendations…';
   }
   try{
     const needsMoreCache=token&&(cached.length<assistantCacheMinimum||immediate.strictCount<5);
-    if(!needsMoreCache)return;
+    if(!needsMoreCache){
+      if(!assistantWallHasMovieCards())await recoverAssistantWallFromCandidates('no background fetch needed');
+      return;
+    }
     assistantReason.textContent=immediate.pool.length?'Fetching more exact genre matches…':'Building exact genre matches…';
     if(selectedGenreId(answers)&&immediate.strictCount<5){
       const exactGenreCandidates=await fetchAssistantExactGenrePool(answers);
@@ -2298,6 +2360,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     const {pool,exactEnough}=getAssistantMoviePool(candidates,answers,memory,{different});
     const rendered=pool.length?renderPosterWall(pool):false;
     assistantReason.textContent=pool.length&&rendered?(exactEnough?assistantExplanation(answers,pool.map(normalizeMovie)):closestAssistantExplanation(answers,pool.map(normalizeMovie))):'No exact matches found. Try changing one filter.';
+    if(!rendered)await recoverAssistantWallFromCandidates('update movie wall');
   }catch(error){
     if(requestId!==assistantRenderRequest)return;
     assistantDataSourceLog('fallback',{reason:String(error)});
@@ -2305,7 +2368,9 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     const {pool}=getAssistantMoviePool(fallbackForCurrentFilters,answers,memory,{different});
     const rendered=pool.length?renderPosterWall(pool):false;
     assistantReason.textContent=pool.length&&rendered?closestAssistantExplanation(answers,pool.map(normalizeMovie)):'No exact matches found. Try changing one filter.';
+    if(!rendered)await recoverAssistantWallFromCandidates('update movie wall error');
   }
+  scheduleAssistantWallRecovery('update movie wall complete');
   if(scroll)assistantPanel.scrollIntoView({behavior:'smooth',block:'start'});
 };
 const renderAssistantRecommendations=updateMovieWall;
