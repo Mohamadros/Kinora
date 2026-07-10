@@ -1026,7 +1026,9 @@ const assistantPosterPaths={
   'October Sky':'/umWrXCIWdcYPf764ruvMRCpG3cA.jpg',
   'The Truman Show':'/vuza0WqY239yBXOadKlGwJsZJFE.jpg',
   'Mission: Impossible - Fallout':'/AkJQpZp9WoNdj7pLYSj1L0RcMMN.jpg',
-  'The Fabelmans':'/h7llKkqkkJtJrTOaDLuVeUYDQ7I.jpg'
+  'The Fabelmans':'/h7llKkqkkJtJrTOaDLuVeUYDQ7I.jpg',
+  'Akira':'/neZ0ykEsPqxamsX6o5QNUFILQrz.jpg',
+  'Top Gun: Maverick':'/n0YuM4f5lvGAP6MAW2kBIzugXnc.jpg'
 };
 const assistantPosterImage=title=>assistantPosterPaths[title]?`${imageBase}${assistantPosterPaths[title]}`:assistantPosterFallback(title);
 const slugForExternalMoviePage=(title,separator='-')=>String(title||'')
@@ -1657,6 +1659,8 @@ const computeAssistantTasteProfile=(memory=getAssistantMemory())=>{
   const watchedTmdbIds=new Set();
   const savedTmdbIds=new Set();
   const ratedTmdbIds=new Set();
+  const ratedTitles=new Set();
+  const allLibraryTitles=new Set(Object.keys(items));
   const rememberedMovies=memory.movies||{};
   const watchedTitles=new Set([...(memory.watched||[]),...Object.entries(items).filter(([,item])=>['watched','rated'].includes(item.status)).map(([title])=>title)]);
   const savedTitles=new Set(memory.saved||[]);
@@ -1671,7 +1675,7 @@ const computeAssistantTasteProfile=(memory=getAssistantMemory())=>{
     const isRated=rating>0;
     if(isWatched)watchedTmdbIds.add(id);
     if(isSaved)savedTmdbIds.add(id);
-    if(isRated)ratedTmdbIds.add(id);
+    if(isRated){ratedTmdbIds.add(id);ratedTitles.add(title);allLibraryTitles.add(title);}
     const weight=isRated?ratingTasteWeight(rating):(isSaved?1.2:(isWatched?0.35:0));
     (normalized.genreIds||[]).forEach(genreId=>{
       if(weight>=0)favoriteGenreWeights[genreId]=(favoriteGenreWeights[genreId]||0)+weight;
@@ -1696,15 +1700,25 @@ const computeAssistantTasteProfile=(memory=getAssistantMemory())=>{
     favoriteMoodWeights,
     favoriteDecadeWeights,
     watchedTitles,
-    savedTitles
+    savedTitles,
+    ratedTitles,
+    allLibraryTitles
   };
+};
+const isAssistantLibraryExactMatch=(movie,profile)=>{
+  const normalized=normalizeMovie(movie);
+  const key=movieIdentityKey(movie);
+  return profile.allLibraryTitles.has(normalized.title)||
+    profile.watchedTmdbIds.has(key)||
+    profile.savedTmdbIds.has(key)||
+    profile.ratedTmdbIds.has(key);
 };
 const personalizeAssistantMovie=(movie,memory,profile=computeAssistantTasteProfile(memory))=>{
   const normalized=normalizeMovie(movie);
   const candidateId=movieIdentityKey(movie);
   let score=0;
   const reasons=[];
-  if(profile.watchedTmdbIds.has(candidateId)||profile.watchedTitles.has(normalized.title)){
+  if(profile.ratedTmdbIds.has(candidateId)||profile.ratedTitles.has(normalized.title)||profile.watchedTmdbIds.has(candidateId)||profile.watchedTitles.has(normalized.title)){
     score-=16;
   }else if(profile.savedTmdbIds.has(candidateId)||profile.savedTitles.has(normalized.title)){
     score-=4;
@@ -2422,7 +2436,10 @@ const uniqueAssistantMovies=movies=>{
 const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
   const {movies:strictSource,counts}=filterAssistantCandidates(candidates,answers,memory);
   const profile=computeAssistantTasteProfile(memory);
-  const ranked=strictSource
+  const allowLibraryRepeats=normalizePlatform(answers.platform)==='library';
+  const freshSource=allowLibraryRepeats?strictSource:strictSource.filter(movie=>!isAssistantLibraryExactMatch(movie,profile));
+  const rankingSource=freshSource.length?freshSource:strictSource;
+  const ranked=rankingSource
     .map(movie=>scoreAssistantMovieDetailed(movie,answers,memory,profile))
     .sort((a,b)=>b.score-a.score);
   const offset=ranked.length>5?(assistantVariant*5)%Math.max(1,ranked.length-4):0;
@@ -2432,6 +2449,9 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
   const fifthScore=ranked[4]?.score||0;
   assistantDebug('mood scoring',{
     countAfterMoodScoring:ranked.length,
+    strictSourceCount:strictSource.length,
+    libraryExactExcludedCount:allowLibraryRepeats?0:strictSource.length-freshSource.length,
+    libraryRepeatsAllowed:allowLibraryRepeats,
     finalRenderedCount:pool.length,
     finalResults:pool.map(movie=>({
       title:normalizeMovie(movie).title,
