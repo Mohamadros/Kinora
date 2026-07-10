@@ -1282,15 +1282,29 @@ const upsertSupabaseLibraryMovie=async (movie,status,rating=0)=>{
   if(error){console.warn('Kinora library save failed',error);return false;}
   return true;
 };
-const deleteSupabaseLibraryMovie=async title=>{
+const deleteSupabaseLibraryMovie=async movieOrTitle=>{
   if(!supabaseClient||!currentUserId()){
     lastSupabaseLibraryResult={ok:false,action:'delete',error:supabaseConfigError||'Supabase unavailable or user not signed in.'};
     return false;
   }
-  const {error}=await supabaseClient.from('movie_library').delete().eq('user_id',currentUserId()).eq('title',title);
-  lastSupabaseLibraryResult={ok:!error,action:'delete',error:error?String(error.message||error):null};
-  if(error){console.warn('Kinora library delete failed',error);return false;}
-  return true;
+  const movie=typeof movieOrTitle==='string'?findAssistantMovieByTitle(movieOrTitle):movieOrTitle;
+  const normalized=normalizeMovie(movie||{title:String(movieOrTitle||'')});
+  const tmdbId=movie?.tmdbId||movie?.id||normalized.id||null;
+  let deletedOnline=false;
+  let deleteError=null;
+  if(tmdbId){
+    const {error}=await supabaseClient.from('movie_library').delete().eq('user_id',currentUserId()).eq('tmdb_id',tmdbId);
+    if(error)deleteError=error;
+    else deletedOnline=true;
+  }
+  if(normalized.title){
+    const {error}=await supabaseClient.from('movie_library').delete().eq('user_id',currentUserId()).eq('title',normalized.title);
+    if(error)deleteError=deleteError||error;
+    else deletedOnline=true;
+  }
+  lastSupabaseLibraryResult={ok:deletedOnline&&!deleteError,action:'delete',error:deleteError?String(deleteError.message||deleteError):null};
+  if(deleteError&&!deletedOnline){console.warn('Kinora library delete failed',deleteError);return false;}
+  return deletedOnline;
 };
 const setAssistantMemory=memory=>{
   const normalized=normalizeAssistantMemory(memory);
@@ -1349,6 +1363,7 @@ const findAssistantMovieByTitle=title=>{
 const removeAssistantMemoryItem=(type,title)=>{
   assistantDebug('library action before',{actionType:'remove',title,type,supabaseResult:lastSupabaseLibraryResult,...assistantStateCounts()});
   const next=getAssistantMemory();
+  const removedMovie=next.movies?.[title]||findAssistantMovieByTitle(title);
   next.items={...(next.items||{})};
   next.ratings={...(next.ratings||{})};
   next.movies={...(next.movies||{})};
@@ -1356,7 +1371,7 @@ const removeAssistantMemoryItem=(type,title)=>{
   delete next.ratings[title];
   delete next.movies[title];
   setAssistantMemory(next);
-  deleteSupabaseLibraryMovie(title).then(savedOnline=>{
+  deleteSupabaseLibraryMovie(removedMovie).then(savedOnline=>{
     preserveAssistantWall();
     if(!assistantWallHasMovieCards())recoverAssistantWallFromCandidates('library remove');
     assistantDebug('library action after',{actionType:'remove',title,type,savedOnline,supabaseResult:lastSupabaseLibraryResult,...assistantStateCounts()});
@@ -1860,6 +1875,10 @@ const movieHasSelectedPlatform=(movie,answers,memory)=>{
   if(platform==='library')return true;
   return platformValues(movie).length>0&&movieMatchesPlatform(movie,answers.platform);
 };
+const assistantLibraryMovies=memory=>{
+  const movies=memory.movies||{};
+  return Object.keys(memory.items||{}).map(title=>movies[title]||findAssistantMovieByTitle(title)).filter(movie=>normalizeMovie(movie).title);
+};
 const strictAssistantCandidate=(movie,answers,memory)=>{
   const normalized=normalizeMovie(movie);
   if(!normalized.title)return false;
@@ -2325,7 +2344,7 @@ const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false})=>{
   setAssistantMemory(setAssistantMovieStatus(next,movie,remove?'':status,rating));
   let savedOnline=false;
   try{
-    savedOnline=remove?await deleteSupabaseLibraryMovie(normalized.title):await upsertSupabaseLibraryMovie(movie,status,rating);
+    savedOnline=remove?await deleteSupabaseLibraryMovie(movie):await upsertSupabaseLibraryMovie(movie,status,rating);
   }catch(error){
     console.warn('Kinora library mutation failed',error);
     lastSupabaseLibraryResult={ok:false,action:remove?'delete':'upsert',error:String(error.message||error)};
@@ -2403,13 +2422,13 @@ const openMovieDetails=async movie=>{
     const memory=getAssistantMemory();
     const status=memory.items?.[normalized.title]?.status||'';
     const userRating=Number(memory.ratings?.[normalized.title]||0);
-    save.classList.toggle('is-active',status==='saved');
+    save.classList.toggle('is-active',Boolean(status));
     watched.classList.toggle('is-active',status==='watched'||status==='rated');
     ratingPanel.hidden=!(status==='watched'||status==='rated');
     ratingScale.querySelectorAll('button').forEach((button,index)=>button.classList.toggle('is-active',index+1===userRating));
     ratingStatus.textContent=userRating?`Your rating: ${userRating}/10`:'';
   };
-  save.addEventListener('click',async()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const isActive=next.items?.[normalized.title]?.status==='saved';await mutateAssistantLibrary({movie,status:'saved',remove:isActive});sync();returnToMovieMatch();});
+  save.addEventListener('click',async()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const isActive=Boolean(next.items?.[normalized.title]);await mutateAssistantLibrary({movie,status:'saved',remove:isActive});sync();returnToMovieMatch();});
   watched.addEventListener('click',async()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const status=next.items?.[normalized.title]?.status;await mutateAssistantLibrary({movie,status:'watched',remove:status==='watched'||status==='rated'});sync();returnToMovieMatch();});
   trailer.addEventListener('click',()=>openTrailer(normalized));
   actions.append(save,watched,trailer,communityButton); detail.append(title,meta,storyLabel,overview,ratings,actions,ratingPanel); content.append(detail); message.textContent=''; sync(); trailerDialog.showModal();
@@ -2443,9 +2462,12 @@ const uniqueAssistantMovies=movies=>{
   });
 };
 const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
-  const {movies:strictSource,counts}=filterAssistantCandidates(candidates,answers,memory);
+  const selectedPlatform=normalizePlatform(answers.platform);
+  const librarySource=selectedPlatform==='library'?assistantLibraryMovies(memory):[];
+  const candidateSource=librarySource.length?librarySource:candidates;
+  const {movies:strictSource,counts}=filterAssistantCandidates(candidateSource,answers,memory);
   const profile=computeAssistantTasteProfile(memory);
-  const allowLibraryRepeats=normalizePlatform(answers.platform)==='library';
+  const allowLibraryRepeats=selectedPlatform==='library';
   const freshSource=allowLibraryRepeats?strictSource:strictSource.filter(movie=>!isAssistantLibraryExactMatch(movie,profile));
   const rankingSource=freshSource.length?freshSource:strictSource;
   const ranked=rankingSource
@@ -2458,6 +2480,8 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
   const fifthScore=ranked[4]?.score||0;
   assistantDebug('mood scoring',{
     countAfterMoodScoring:ranked.length,
+    candidateSource:librarySource.length?'userLibrary':'movieCandidates',
+    librarySourceCount:librarySource.length,
     strictSourceCount:strictSource.length,
     libraryExactExcludedCount:allowLibraryRepeats?0:strictSource.length-freshSource.length,
     libraryRepeatsAllowed:allowLibraryRepeats,
