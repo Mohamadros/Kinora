@@ -1665,6 +1665,7 @@ const assistantCacheTarget=3200;
 let assistantMovieCache=[];
 let assistantCachePromise=null;
 let currentAssistantRecommendations=[];
+let lastVisibleAssistantRecommendations=[];
 let assistantStaticPackageCache=null;
 let assistantStaticPackagePromise=null;
 const assistantDebug=(label,payload={})=>{
@@ -2041,9 +2042,9 @@ const assistantStateCounts=()=>({
 });
 const preserveAssistantWall=()=>{
   if(!assistantResults)return;
-  if(!assistantResults.children.length&&currentAssistantRecommendations.length){
-    assistantDebug('restoring visible recommendations',assistantStateCounts());
-    renderPosterWall(currentAssistantRecommendations);
+  if(!assistantResults.children.length&&lastVisibleAssistantRecommendations.length){
+    assistantDebug('restoring visible recommendations',{...assistantStateCounts(),restoredCount:lastVisibleAssistantRecommendations.length});
+    renderPosterWall(lastVisibleAssistantRecommendations,{skipValidation:true});
   }
 };
 const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false})=>{
@@ -2192,10 +2193,10 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
   });
   return {pool:pool.slice(0,5),exactEnough:pool.length>=3&&bestScore>28&&fifthScore>18,ranked,strictCount:strictSource.length,counts};
 };
-const renderPosterWall=movies=>{
+const renderPosterWall=(movies,{preserveOnEmpty=false,skipValidation=false}={})=>{
   const answers=getAssistantFilters();
   const memory=getAssistantMemory();
-  const finalMovies=validateAssistantPool(movies,answers,memory);
+  const finalMovies=skipValidation?[...movies]:validateAssistantPool(movies,answers,memory);
   if(finalMovies.length!==movies.length){
     assistantDebug('final render guard removed results',{removed:movies.filter(movie=>!finalMovies.includes(movie)).map(movie=>({
       title:normalizeMovie(movie).title,
@@ -2204,6 +2205,10 @@ const renderPosterWall=movies=>{
     })),selectedGenreId:selectedGenreId(answers)||null,selectedGenreName:genreNames[selectedGenreId(answers)]||'Any genre'});
   }
   if(!finalMovies.length){
+    if(preserveOnEmpty&&lastVisibleAssistantRecommendations.length){
+      assistantDebug('kept previous recommendations after empty guard',{candidateCount:movies.length,previousCount:lastVisibleAssistantRecommendations.length});
+      return false;
+    }
     assistantResults.innerHTML='';
     currentAssistantRecommendations=[];
     assistantDebug('render empty after final guard',{candidateCount:movies.length,selectedGenreId:selectedGenreId(answers)||null,selectedGenreName:genreNames[selectedGenreId(answers)]||'Any genre'});
@@ -2211,6 +2216,7 @@ const renderPosterWall=movies=>{
   }
   assistantResults.innerHTML='';
   currentAssistantRecommendations=[...finalMovies];
+  lastVisibleAssistantRecommendations=[...finalMovies];
   assistantDebug('rendered results',{results:finalMovies.map(movie=>({
     title:normalizeMovie(movie).title,
     selectedGenreId:selectedGenreId(answers)||null,
