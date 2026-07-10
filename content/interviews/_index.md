@@ -1,30 +1,34 @@
 +++
 title = "Interviews"
-kicker = "Interview results"
-intro = "Audience voices reveal how streaming has changed habits without replacing the social power of the cinema."
+kicker = "Marburg University voices"
+intro = "Four students from Marburg University reflect on how digital platforms shape their cinema habits, from quick streaming choices to shared movie nights."
 background = "images/auditorium-seats.png"
 weight = 40
 [[stats]]
-value = 72
-label = "use streaming weekly"
+value = 4
+label = "student interviews"
 [[stats]]
-value = 38
-label = "visit cinemas monthly"
+value = 3
+label = "prefer shared viewing"
 [[stats]]
-value = 81
-label = "value the shared experience"
+value = 2
+label = "mix cinema and streaming"
 [[quotes]]
-quote = "At home I watch a film. In the cinema, I give it my full attention."
-person = "Participant 04 · age 22"
-question = "What makes cinema special?"
+quote = "At Marburg University, cinema is not only about watching a film. It is a reason to meet, talk, and compare what everyone noticed."
+person = "Mohamad · Marburg University"
+question = "What makes cinema social?"
 [[quotes]]
-quote = "Streaming made me watch more, but the cinema is where a film becomes a memory."
-person = "Participant 09 · age 31"
-question = "Has streaming changed your habits?"
+quote = "Streaming is practical during the week, but a cinema evening feels more intentional because you leave your room and share the experience."
+person = "Anhelina · Marburg University"
+question = "How do you choose where to watch?"
 [[quotes]]
-quote = "The audience changes the rhythm. You feel the room reacting with you."
-person = "Participant 12 · age 46"
-question = "Will cinemas survive?"
+quote = "Recommendations are useful when they connect to mood, time, and friends. I want a film choice that fits the evening, not just a popular title."
+person = "Reza · Marburg University"
+question = "What should digital cinema tools improve?"
+[[quotes]]
+quote = "For me, films become stronger after the discussion. A good cinema platform should make space for reactions and different opinions."
+person = "Aida · Marburg University"
+question = "Why do community voices matter?"
 +++
 
-Sample findings are shown for design purposes. Replace them with anonymized results from your research and document your consent process in the final submission.
+These interview notes summarize student perspectives from Marburg University and frame Kinora as a digital cinema space built around discovery, shared attention, and community discussion.
