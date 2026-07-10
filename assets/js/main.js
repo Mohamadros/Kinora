@@ -1737,7 +1737,8 @@ const computeAssistantTasteProfile=(memory=getAssistantMemory())=>{
     watchedTitles,
     savedTitles,
     ratedTitles,
-    allLibraryTitles
+    allLibraryTitles,
+    signalCount:allLibraryTitles.size
   };
 };
 const isAssistantLibraryExactMatch=(movie,profile)=>{
@@ -1754,29 +1755,29 @@ const personalizeAssistantMovie=(movie,memory,profile=computeAssistantTasteProfi
   let score=0;
   const reasons=[];
   if(profile.ratedTmdbIds.has(candidateId)||profile.ratedTitles.has(normalized.title)||profile.watchedTmdbIds.has(candidateId)||profile.watchedTitles.has(normalized.title)){
-    score-=16;
+    score-=90;
   }else if(profile.savedTmdbIds.has(candidateId)||profile.savedTitles.has(normalized.title)){
-    score-=4;
+    score-=45;
   }
   (normalized.genreIds||[]).forEach(genreId=>{
     const favoriteWeight=Number(profile.favoriteGenreWeights[genreId]||0);
     const dislikedWeight=Number(profile.dislikedGenreWeights[genreId]||0);
     if(favoriteWeight>0){
-      score+=Math.min(18,favoriteWeight*1.7);
+      score+=Math.min(34,favoriteWeight*2.9);
       reasons.push(genreNames[genreId]||'a favorite genre');
     }
-    if(dislikedWeight>0)score-=Math.min(14,dislikedWeight*2.1);
+    if(dislikedWeight>0)score-=Math.min(28,dislikedWeight*3.4);
   });
   (movie.moods||movie.moodTags||[]).forEach(tag=>{
     const weight=Number(profile.favoriteMoodWeights[tag]||0);
     if(weight>0){
-      score+=Math.min(9,weight*1.2);
+      score+=Math.min(18,weight*2);
       reasons.push(`${tag} films`);
     }
   });
   const decade=movieDecade(movie);
   if(decade&&profile.favoriteDecadeWeights[decade]){
-    score+=Math.min(5,profile.favoriteDecadeWeights[decade]*.7);
+    score+=Math.min(10,profile.favoriteDecadeWeights[decade]*1.1);
     reasons.push(`${decade}s films`);
   }
   const rememberedMovies=memory.movies||{};
@@ -1786,9 +1787,9 @@ const personalizeAssistantMovie=(movie,memory,profile=computeAssistantTasteProfi
     if(!similarity)return;
     const rating=Number(memory.ratings?.[title]||0);
     if(rating>0){
-      score+=similarity*ratingTasteWeight(rating)*.55;
+      score+=similarity*ratingTasteWeight(rating)*.95;
     }else if(profile.savedTitles.has(title)){
-      score+=similarity*.25;
+      score+=similarity*.75;
     }
   });
   return {score,reasons:[...new Set(reasons)].slice(0,3),profile};
@@ -1948,8 +1949,9 @@ const validateAssistantPool=(movies,answers,memory)=>{
 const scoreAssistantMovieDetailed=(movie,answers,memory,profile=computeAssistantTasteProfile(memory))=>{
   const normalized=normalizeMovie(movie);
   const reasons=[];
+  const hasTasteSignals=Boolean(profile.signalCount||profile.favoriteGenreIds.length||profile.favoriteMoodTags.length||profile.favoriteDecades.length||profile.dislikedGenreIds.length);
   let baseScore=Number(normalized.rating||movie.vote_average||0)*1.4+Math.min(Number(movie.popularity||0),100)*.12;
-  if(curatedAssistantTitles.has(normalized.title))baseScore+=14;
+  if(curatedAssistantTitles.has(normalized.title))baseScore+=hasTasteSignals?4:14;
   const genreId=selectedGenreId(answers);
   if(genreId){
     baseScore+=30;
@@ -2648,7 +2650,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
       if(!assistantWallHasMovieCards())await recoverAssistantWallFromCandidates('no background fetch needed');
       return;
     }
-    assistantReason.textContent=immediate.pool.length?'Fetching more exact genre matches…':'Building exact genre matches…';
+    if(!immediate.pool.length)assistantReason.textContent='Building exact genre matches…';
     if(selectedGenreId(answers)&&immediate.strictCount<5){
       const exactGenreCandidates=await fetchAssistantExactGenrePool(answers);
       if(requestId!==assistantRenderRequest)return;
@@ -2666,7 +2668,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
         }
       }
     }
-    assistantReason.textContent=immediate.pool.length?'Updating recommendations in the background…':'Building a larger movie cache…';
+    if(!immediate.pool.length)assistantReason.textContent='Building a larger movie cache…';
     const candidates=await warmAssistantMovieCache({force:cached.length<assistantCacheMinimum});
     if(requestId!==assistantRenderRequest)return;
     const completeCandidates=staticSource.length?mergeAssistantMovieSets(staticSource,candidates):candidates;
