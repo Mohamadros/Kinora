@@ -942,6 +942,14 @@ const openTrailer=async movie=>{
 const closeTrailer=()=>{trailerDialog.close();trailerDialog.querySelector('[data-trailer-content]').replaceChildren();};
 document.querySelector('[data-trailer-close]')?.addEventListener('click',closeTrailer);
 trailerDialog?.addEventListener('click',event=>{if(event.target===trailerDialog)closeTrailer();});
+const returnToMovieMatch=()=>{
+  if(trailerDialog?.open)closeTrailer();
+  requestAnimationFrame(()=>{
+    const target=assistantPanel&&!assistantPanel.hidden?assistantPanel:assistantForm;
+    target?.scrollIntoView({behavior:'smooth',block:'start'});
+    assistantResults?.querySelector('.wall-poster')?.focus({preventScroll:true});
+  });
+};
 
 const assistantForm=document.querySelector('[data-decision-form]');
 const assistantResults=document.querySelector('[data-assistant-results]');
@@ -2386,6 +2394,7 @@ const openMovieDetails=async movie=>{
       await mutateAssistantLibrary({movie,status:'rated',rating:score});
       sync();
       ratingStatus.textContent=`Your rating: ${score}/10`;
+      returnToMovieMatch();
     });
     ratingScale.append(button);
   });
@@ -2400,8 +2409,8 @@ const openMovieDetails=async movie=>{
     ratingScale.querySelectorAll('button').forEach((button,index)=>button.classList.toggle('is-active',index+1===userRating));
     ratingStatus.textContent=userRating?`Your rating: ${userRating}/10`:'';
   };
-  save.addEventListener('click',async()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const isActive=next.items?.[normalized.title]?.status==='saved';await mutateAssistantLibrary({movie,status:'saved',remove:isActive});sync();});
-  watched.addEventListener('click',async()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const status=next.items?.[normalized.title]?.status;await mutateAssistantLibrary({movie,status:'watched',remove:status==='watched'||status==='rated'});sync();});
+  save.addEventListener('click',async()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const isActive=next.items?.[normalized.title]?.status==='saved';await mutateAssistantLibrary({movie,status:'saved',remove:isActive});sync();returnToMovieMatch();});
+  watched.addEventListener('click',async()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const status=next.items?.[normalized.title]?.status;await mutateAssistantLibrary({movie,status:'watched',remove:status==='watched'||status==='rated'});sync();returnToMovieMatch();});
   trailer.addEventListener('click',()=>openTrailer(normalized));
   actions.append(save,watched,trailer,communityButton); detail.append(title,meta,storyLabel,overview,ratings,actions,ratingPanel); content.append(detail); message.textContent=''; sync(); trailerDialog.showModal();
 };
