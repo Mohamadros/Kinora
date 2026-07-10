@@ -2164,8 +2164,29 @@ const mergeAssistantMovieSets=(...sets)=>{
   sets.flat().filter(Boolean).forEach(movie=>{
     const normalized=normalizeAssistantCacheMovie(movie);
     const key=assistantCacheKeyForMovie(normalized);
-    if(byId.has(key))duplicates++;
-    byId.set(key,normalized);
+    if(byId.has(key)){
+      duplicates++;
+      const existing=byId.get(key);
+      byId.set(key,{
+        ...existing,
+        ...normalized,
+        runtime:Number(normalized.runtime||0)||Number(existing.runtime||0)||0,
+        genreIds:[...new Set([...(existing.genreIds||[]),...(normalized.genreIds||[])])],
+        genres:[...new Set([...(existing.genres||[]),...(normalized.genres||[])])],
+        moods:[...new Set([...(existing.moods||[]),...(normalized.moods||[])])],
+        moodTags:[...new Set([...(existing.moodTags||[]),...(normalized.moodTags||[])])],
+        platforms:[...new Set([...(existing.platforms||[]),...(normalized.platforms||[])])],
+        poster_path:normalized.poster_path||existing.poster_path,
+        poster:normalized.poster&&!String(normalized.poster).startsWith('data:')?normalized.poster:existing.poster||normalized.poster,
+        posterUrl:normalized.posterUrl&&!String(normalized.posterUrl).startsWith('data:')?normalized.posterUrl:existing.posterUrl||normalized.posterUrl,
+        overview:normalized.overview&&normalized.overview!=='Details will be announced closer to release.'?normalized.overview:existing.overview||normalized.overview,
+        vote_average:Number(normalized.vote_average||0)||Number(existing.vote_average||0)||0,
+        voteAverage:Number(normalized.voteAverage||0)||Number(existing.voteAverage||0)||0,
+        popularity:Number(normalized.popularity||0)||Number(existing.popularity||0)||0
+      });
+    }else{
+      byId.set(key,normalized);
+    }
   });
   const movies=[...byId.values()];
   assistantDebug('duplicate removal',{inputCount:sets.flat().filter(Boolean).length,duplicates,cacheSize:movies.length});
@@ -2579,16 +2600,16 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   lastAssistantFilterSignature=filterSignature;
   assistantPanel.hidden=false; assistantPanel.classList.add('is-visible');
   const cached=loadAssistantMovieCache();
-  let staticSource=cached.length>=5?[]:await loadAssistantStaticPackage();
+  let staticSource=await loadAssistantStaticPackage();
   if(requestId!==assistantRenderRequest)return;
   let immediateSource=[];
   let activeSource='fallback';
-  if(cached.length>=5){
+  if(staticSource.length){
+    immediateSource=mergeAssistantMovieSets(staticSource,cached);
+    activeSource='static content package';
+  }else if(cached.length>=5){
     immediateSource=cached;
     activeSource='cache';
-  }else if(staticSource.length){
-    immediateSource=staticSource;
-    activeSource='static content package';
   }else if(token){
     immediateSource=[];
     activeSource='TMDB';
@@ -2609,16 +2630,6 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     immediate=getAssistantMoviePool(immediateSource,answers,fallbackMemory,{different});
   }
   updateAssistantPersonalizationNote(immediate.profile);
-  if(!immediate.pool.length&&cached.length>=5&&!staticSource.length){
-    staticSource=await loadAssistantStaticPackage();
-    if(requestId!==assistantRenderRequest)return;
-  }
-  if(!immediate.pool.length&&staticSource.length&&immediateSource!==staticSource){
-    assistantDataSourceLog('static content package',{candidateCount:staticSource.length,reason:'cache produced no exact matches'});
-    immediateSource=staticSource;
-    activeSource='static content package';
-    immediate=getAssistantMoviePool(immediateSource,answers,memory,{different});
-  }
   assistantDebug('selected filters',{answers,dataSource:activeSource,cacheSize:cached.length,staticCount:staticSource.length,filtersChanged,different});
   if(immediate.pool.length){
     const rendered=renderPosterWall(immediate.pool);
@@ -2642,8 +2653,8 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
       const exactGenreCandidates=await fetchAssistantExactGenrePool(answers);
       if(requestId!==assistantRenderRequest)return;
       if(exactGenreCandidates.length){
-        const mergedExact=mergeAssistantMovieSets(cached,exactGenreCandidates);
-        saveAssistantMovieCache(mergeAssistantMovieSets(loadAssistantMovieCache(),mergedExact));
+        const mergedExact=mergeAssistantMovieSets(staticSource,cached,exactGenreCandidates);
+        saveAssistantMovieCache(mergeAssistantMovieSets(loadAssistantMovieCache(),exactGenreCandidates));
         const exactPool=getAssistantMoviePool(mergedExact,answers,memory,{different});
         updateAssistantPersonalizationNote(exactPool.profile);
         if(exactPool.pool.length){
@@ -2658,7 +2669,8 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     assistantReason.textContent=immediate.pool.length?'Updating recommendations in the background…':'Building a larger movie cache…';
     const candidates=await warmAssistantMovieCache({force:cached.length<assistantCacheMinimum});
     if(requestId!==assistantRenderRequest)return;
-    const {pool,exactEnough,profile}=getAssistantMoviePool(candidates,answers,memory,{different});
+    const completeCandidates=staticSource.length?mergeAssistantMovieSets(staticSource,candidates):candidates;
+    const {pool,exactEnough,profile}=getAssistantMoviePool(completeCandidates,answers,memory,{different});
     updateAssistantPersonalizationNote(profile);
     const rendered=pool.length?renderPosterWall(pool):false;
     assistantReason.textContent=pool.length&&rendered?(exactEnough?assistantExplanation(answers,pool.map(normalizeMovie)):closestAssistantExplanation(answers,pool.map(normalizeMovie))):'No exact matches found. Try changing one filter.';
