@@ -1556,7 +1556,7 @@ const createMemoryListItem=(title,{type,rating,movie}={})=>{
   const statusAction=document.createElement('button');
   statusAction.type='button';
   statusAction.className='taste-memory-remove taste-memory-status-action';
-  statusAction.textContent=type==='rated'?'Remove rating':type==='watched'?'Watched':'Saved';
+  statusAction.textContent=type==='rated'?'Unrate':type==='watched'?'Unwatched':'Unsave';
   statusAction.setAttribute('aria-label',`${statusAction.textContent} ${title} from My Library`);
   statusAction.addEventListener('click',()=>removeAssistantMemoryItem(type,title));
   item.append(titleButton,meta,statusAction);
@@ -2625,7 +2625,7 @@ const openMovieDetails=async movie=>{
   const ratingQuestion=document.createElement('p'); ratingQuestion.textContent='How would you rate this movie?';
   const ratingScale=document.createElement('div'); ratingScale.className='watched-rating-scale';
   const ratingStatus=document.createElement('small'); ratingStatus.className='watched-rating-status';
-  const skipRating=document.createElement('button'); skipRating.type='button'; skipRating.className='watched-rating-skip'; skipRating.textContent='Skip rating';
+  const skipRating=document.createElement('button'); skipRating.type='button'; skipRating.className='watched-rating-skip'; skipRating.textContent='Close without rating';
   const libraryStatus=document.createElement('p'); libraryStatus.className='movie-detail-library-status'; libraryStatus.setAttribute('role','status');
   Array.from({length:10},(_,index)=>index+1).forEach(score=>{
     const button=document.createElement('button');
@@ -2650,10 +2650,11 @@ const openMovieDetails=async movie=>{
     const memory=getAssistantMemory();
     const status=memory.items?.[normalized.title]?.status||'';
     const userRating=Number(memory.ratings?.[normalized.title]||0);
-    save.classList.toggle('is-active',Boolean(status));
+    save.classList.toggle('is-active',status==='saved');
     watched.classList.toggle('is-active',status==='watched'||status==='rated');
-    save.textContent=status?'Remove':'Save';
-    watched.textContent=status==='watched'||status==='rated'?'Watched':'Mark watched';
+    save.disabled=status==='watched'||status==='rated';
+    save.textContent=status==='saved'?'Unsave':status==='watched'||status==='rated'?'In Library':'Save';
+    watched.textContent=status==='watched'||status==='rated'?'Unwatched':'Mark watched';
     ratingPanel.hidden=!(status==='watched'||status==='rated');
     ratingScale.querySelectorAll('button').forEach((button,index)=>button.classList.toggle('is-active',index+1===userRating));
     ratingStatus.textContent=userRating?`Your rating: ${userRating}/10`:'';
@@ -2665,22 +2666,28 @@ const openMovieDetails=async movie=>{
   save.addEventListener('click',async()=>{
     if(!requireKinoraAuth())return;
     const next=getAssistantMemory();
-    const isActive=Boolean(next.items?.[normalized.title]);
+    const currentStatus=next.items?.[normalized.title]?.status||'';
+    const isActive=currentStatus==='saved';
     save.disabled=true;
     await mutateAssistantLibrary({movie,status:'saved',remove:isActive});
+    save.disabled=false;
     sync();
-    libraryStatus.textContent=isActive?'Removed from My Library.':'Saved to My Library.';
+    libraryStatus.textContent=isActive?'Unsaved from My Library.':'Saved to My Library.';
     preserveAssistantWall();
-    closeMovieDetailToMatch();
   });
   watched.addEventListener('click',async()=>{
     if(!requireKinoraAuth())return;
+    const next=getAssistantMemory();
+    const currentStatus=next.items?.[normalized.title]?.status||'';
+    const isWatched=currentStatus==='watched'||currentStatus==='rated';
     watched.disabled=true;
-    await mutateAssistantLibrary({movie,status:'watched',remove:false});
+    await mutateAssistantLibrary({movie,status:'watched',remove:isWatched});
     sync();
     watched.disabled=false;
-    ratingPanel.hidden=false;
-    ratingPanel.querySelector('button')?.focus({preventScroll:true});
+    if(!isWatched){
+      ratingPanel.hidden=false;
+      ratingPanel.querySelector('button')?.focus({preventScroll:true});
+    }
   });
   trailer.addEventListener('click',()=>openTrailer(normalized));
   backToMatch.addEventListener('click',closeMovieDetailToMatch);
