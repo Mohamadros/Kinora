@@ -51,6 +51,14 @@ const filterMovies = (movies, filters) => {
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
+const coverage = Object.fromEntries(Object.entries(genreNames).map(([id, name]) => [
+  name,
+  (packageData.movies || []).filter(movie => movieGenreIds(movie).includes(Number(id))).length
+]));
+assert((packageData.movies || []).length >= 4000, `Static package has ${(packageData.movies || []).length} movies, expected at least 4000`);
+Object.entries(coverage).forEach(([name, count]) => {
+  assert(count >= 180, `${name} coverage is too low: ${count}`);
+});
 const runCase = ({ name, filters, verify }) => {
   const results = filterMovies(packageData.movies || [], filters);
   assert(results.length > 0, `${name}: no matching movies in static package`);
@@ -90,4 +98,6 @@ runCase({
   verify: movie => assert(movieRuntime(movie) < 90, `${movie.title} is not under 90 minutes`)
 });
 
+console.log('Genre coverage:');
+Object.entries(coverage).forEach(([name, count]) => console.log(`${name}: ${count}`));
 console.log(`Validated ${packageData.count || packageData.movies?.length || 0} static Movie Match candidates.`);

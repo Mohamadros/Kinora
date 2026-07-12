@@ -24,17 +24,23 @@ const genreNames = {
 const apiBase = 'https://api.themoviedb.org/3';
 const today = new Date().toISOString().slice(0, 10);
 const base = { include_adult:'false', 'primary_release_date.lte':today };
+const targetMovieCount = 4500;
+const hydrationLimit = 5200;
+const minimumGenreCoverage = 180;
+const qualityFloor = movie => Number(movie.vote_count || 0) >= 8 && Number(movie.vote_average || 0) >= 4.8 && movie.release_date;
 const strategies = [
-  { name:'popular', pages:20, params:{...base, sort_by:'popularity.desc', 'vote_count.gte':'50'} },
-  { name:'high-rated', pages:20, params:{...base, sort_by:'vote_average.desc', 'vote_count.gte':'250'} },
-  { name:'older-classics', pages:16, params:{...base, sort_by:'vote_average.desc', 'vote_count.gte':'100', 'primary_release_date.lte':'2004-12-31'} },
-  { name:'modern', pages:16, params:{...base, sort_by:'popularity.desc', 'vote_count.gte':'60', 'primary_release_date.gte':'2005-01-01', 'primary_release_date.lte':'2018-12-31'} },
-  { name:'newer', pages:16, params:{...base, sort_by:'popularity.desc', 'vote_count.gte':'40', 'primary_release_date.gte':'2019-01-01'} },
-  ...Object.keys(genreNames).map(id => ({
-    name:`genre-${id}`,
-    pages:8,
-    params:{...base, sort_by:'popularity.desc', 'vote_count.gte':'20', with_genres:id}
-  }))
+  { name:'popular', pages:40, params:{...base, sort_by:'popularity.desc', 'vote_count.gte':'30'} },
+  { name:'high-rated', pages:40, params:{...base, sort_by:'vote_average.desc', 'vote_count.gte':'120'} },
+  { name:'older-classics', pages:35, params:{...base, sort_by:'vote_average.desc', 'vote_count.gte':'45', 'primary_release_date.lte':'2004-12-31'} },
+  { name:'modern', pages:35, params:{...base, sort_by:'popularity.desc', 'vote_count.gte':'25', 'primary_release_date.gte':'2005-01-01', 'primary_release_date.lte':'2018-12-31'} },
+  { name:'newer', pages:35, params:{...base, sort_by:'popularity.desc', 'vote_count.gte':'15', 'primary_release_date.gte':'2019-01-01'} },
+  ...Object.keys(genreNames).flatMap(id => [
+    { name:`genre-${id}-popular`, pages:18, params:{...base, sort_by:'popularity.desc', 'vote_count.gte':'8', with_genres:id} },
+    { name:`genre-${id}-rated`, pages:18, params:{...base, sort_by:'vote_average.desc', 'vote_count.gte':'35', with_genres:id} },
+    { name:`genre-${id}-classic`, pages:10, params:{...base, sort_by:'vote_average.desc', 'vote_count.gte':'18', with_genres:id, 'primary_release_date.lte':'2004-12-31'} },
+    { name:`genre-${id}-modern`, pages:10, params:{...base, sort_by:'popularity.desc', 'vote_count.gte':'12', with_genres:id, 'primary_release_date.gte':'2005-01-01', 'primary_release_date.lte':'2018-12-31'} },
+    { name:`genre-${id}-newer`, pages:10, params:{...base, sort_by:'popularity.desc', 'vote_count.gte':'8', with_genres:id, 'primary_release_date.gte':'2019-01-01'} }
+  ])
 ];
 
 const tmdbUrl = (path, params = {}) => {
@@ -70,6 +76,38 @@ const normalizeMovie = movie => {
     original_language: movie.original_language || '',
     runtime: Number(movie.runtime || 0)
   };
+};
+
+const qualityScore = movie => {
+  const voteCount = Number(movie.vote_count || 0);
+  const voteAverage = Number(movie.vote_average || 0);
+  const popularity = Number(movie.popularity || 0);
+  const year = Number((movie.release_date || '').slice(0, 4)) || 0;
+  const posterBoost = movie.poster_path ? 20 : 0;
+  const recencyBalance = year >= 2019 ? 7 : year >= 2005 ? 10 : 12;
+  return (Math.log10(voteCount + 1) * 45) + (voteAverage * 14) + Math.min(popularity, 800) * 0.22 + posterBoost + recencyBalance;
+};
+
+const genreCoverage = movies => Object.fromEntries(Object.entries(genreNames).map(([id, name]) => [
+  name,
+  movies.filter(movie => movie.genre_ids.includes(Number(id))).length
+]));
+
+const selectBalancedMovies = sourceMovies => {
+  const ordered = [...sourceMovies].filter(qualityFloor).sort((a, b) => qualityScore(b) - qualityScore(a));
+  const selected = new Map();
+  const addMovie = movie => {
+    if (selected.size >= targetMovieCount) return;
+    if (movie?.id) selected.set(movie.id, movie);
+  };
+  Object.keys(genreNames).map(Number).forEach(genreId => {
+    ordered
+      .filter(movie => movie.genre_ids.includes(genreId))
+      .slice(0, minimumGenreCoverage)
+      .forEach(addMovie);
+  });
+  ordered.forEach(addMovie);
+  return [...selected.values()].slice(0, targetMovieCount).sort((a, b) => qualityScore(b) - qualityScore(a));
 };
 
 const hydrateRuntime = async movies => {
@@ -108,13 +146,27 @@ for (const strategy of strategies) {
   }
 }
 
-const movies = (await hydrateRuntime([...byId.values()])).sort((a, b) => b.popularity - a.popularity);
+const fetchedMovies = [...byId.values()].filter(qualityFloor).sort((a, b) => qualityScore(b) - qualityScore(a));
+const hydratedSource = await hydrateRuntime(fetchedMovies.slice(0, hydrationLimit));
+const movies = selectBalancedMovies(hydratedSource);
+const coverage = genreCoverage(movies);
+if (movies.length < 4000) {
+  console.error(`Static package too small: ${movies.length}. Expected at least 4000.`);
+  process.exit(1);
+}
+const weakGenres = Object.entries(coverage).filter(([, count]) => count < minimumGenreCoverage);
+if (weakGenres.length) {
+  console.error('Genre coverage too weak:', Object.fromEntries(weakGenres));
+  process.exit(1);
+}
 await fs.mkdir('static/data', { recursive:true });
 await fs.writeFile('static/data/movie-match-candidates.json', JSON.stringify({
   generatedAt: new Date().toISOString(),
   source: 'TMDb Discover API',
   genreNames,
   count: movies.length,
+  genreCoverage: coverage,
   movies
 }, null, 2));
 console.log(`Wrote ${movies.length} movies to static/data/movie-match-candidates.json`);
+console.table(coverage);
