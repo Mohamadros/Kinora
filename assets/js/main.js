@@ -1556,7 +1556,7 @@ const createMemoryListItem=(title,{type,rating,movie}={})=>{
   const statusAction=document.createElement('button');
   statusAction.type='button';
   statusAction.className='taste-memory-remove taste-memory-status-action';
-  statusAction.textContent=type==='rated'?'Unrate':type==='watched'?'Unwatched':'Unsave';
+  statusAction.textContent=type==='rated'?'Unrate':type==='watched'?'Unwatch':'Unsave';
   statusAction.setAttribute('aria-label',`${statusAction.textContent} ${title} from My Library`);
   statusAction.addEventListener('click',()=>removeAssistantMemoryItem(type,title));
   item.append(titleButton,meta,statusAction);
@@ -2551,7 +2551,7 @@ const rescoreAssistantWallSafely=async reason=>{
   assistantDebug('rescore kept existing wall',{reason,...assistantStateCounts()});
   return assistantWallHasMovieCards();
 };
-const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false})=>{
+const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false,onOptimistic})=>{
   const normalized=normalizeMovie(movie);
   const actionType=remove?'remove':(status==='rated'?'rate':status);
   const beforeCounts=assistantStateCounts();
@@ -2559,6 +2559,7 @@ const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false})=>{
   const previousMemory=getAssistantMemory();
   const next=getAssistantMemory();
   setAssistantMemory(setAssistantMovieStatus(next,movie,remove?'':status,rating));
+  if(typeof onOptimistic==='function')onOptimistic();
   let savedOnline=false;
   try{
     savedOnline=remove?await deleteSupabaseLibraryMovie(movie):await upsertSupabaseLibraryMovie(movie,status,rating);
@@ -2569,6 +2570,7 @@ const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false})=>{
   if(currentUserId()&&!savedOnline){
     setAssistantMemory(previousMemory);
     await loadSupabaseLibrary();
+    if(typeof onOptimistic==='function')onOptimistic();
   }
   preserveAssistantWall();
   if(!assistantWallHasMovieCards())await recoverAssistantWallFromCandidates('library mutation');
@@ -2609,7 +2611,7 @@ const openMovieDetails=async movie=>{
   });
   const actions=document.createElement('div'); actions.className='assistant-actions detail-actions';
   const save=document.createElement('button'); save.type='button'; save.textContent='Save';
-  const watched=document.createElement('button'); watched.type='button'; watched.textContent='Watched';
+  const watched=document.createElement('button'); watched.type='button'; watched.textContent='Watch';
   const trailer=document.createElement('button'); trailer.type='button'; trailer.textContent='Trailer';
   const backToMatch=document.createElement('button'); backToMatch.type='button'; backToMatch.textContent='Back to Movie Match';
   const communityMatches=communityReviewsForMovie(normalized);
@@ -2654,7 +2656,7 @@ const openMovieDetails=async movie=>{
     watched.classList.toggle('is-active',status==='watched'||status==='rated');
     save.disabled=status==='watched'||status==='rated';
     save.textContent=status==='saved'?'Unsave':status==='watched'||status==='rated'?'In Library':'Save';
-    watched.textContent=status==='watched'||status==='rated'?'Unwatched':'Mark watched';
+    watched.textContent=status==='watched'||status==='rated'?'Unwatch':'Watch';
     ratingPanel.hidden=!(status==='watched'||status==='rated');
     ratingScale.querySelectorAll('button').forEach((button,index)=>button.classList.toggle('is-active',index+1===userRating));
     ratingStatus.textContent=userRating?`Your rating: ${userRating}/10`:'';
@@ -2663,27 +2665,35 @@ const openMovieDetails=async movie=>{
       status==='saved'?'Saved to My Library.':
       'Not saved in My Library yet.';
   };
+  let saveBusy=false;
+  let watchedBusy=false;
   save.addEventListener('click',async()=>{
     if(!requireKinoraAuth())return;
+    if(saveBusy)return;
     const next=getAssistantMemory();
     const currentStatus=next.items?.[normalized.title]?.status||'';
     const isActive=currentStatus==='saved';
-    save.disabled=true;
-    await mutateAssistantLibrary({movie,status:'saved',remove:isActive});
-    save.disabled=false;
+    saveBusy=true;
+    save.setAttribute('aria-busy','true');
+    await mutateAssistantLibrary({movie,status:'saved',remove:isActive,onOptimistic:sync});
+    saveBusy=false;
+    save.removeAttribute('aria-busy');
     sync();
     libraryStatus.textContent=isActive?'Unsaved from My Library.':'Saved to My Library.';
     preserveAssistantWall();
   });
   watched.addEventListener('click',async()=>{
     if(!requireKinoraAuth())return;
+    if(watchedBusy)return;
     const next=getAssistantMemory();
     const currentStatus=next.items?.[normalized.title]?.status||'';
     const isWatched=currentStatus==='watched'||currentStatus==='rated';
-    watched.disabled=true;
-    await mutateAssistantLibrary({movie,status:'watched',remove:isWatched});
+    watchedBusy=true;
+    watched.setAttribute('aria-busy','true');
+    await mutateAssistantLibrary({movie,status:'watched',remove:isWatched,onOptimistic:sync});
     sync();
-    watched.disabled=false;
+    watchedBusy=false;
+    watched.removeAttribute('aria-busy');
     if(!isWatched){
       ratingPanel.hidden=false;
       ratingPanel.querySelector('button')?.focus({preventScroll:true});
