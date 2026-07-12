@@ -1408,6 +1408,51 @@ const deleteSupabaseLibraryMovie=async movieOrTitle=>{
   assistantDebug('library delete persisted',{title:normalized.title,tmdbId,releaseYear,deletedRows:deletedRows.length});
   return true;
 };
+const clearSupabaseMovieLibrary=async ()=>{
+  if(!supabaseClient||!currentUserId()){
+    lastSupabaseLibraryResult={ok:false,action:'clear',error:supabaseConfigError||'Supabase unavailable or user not signed in.'};
+    return false;
+  }
+  const {data,error}=await supabaseClient
+    .from('movie_library')
+    .delete()
+    .eq('user_id',currentUserId())
+    .select('id,title,tmdb_id');
+  const deletedRows=Array.isArray(data)?data.length:0;
+  lastSupabaseLibraryResult={ok:!error,action:'clear',error:error?String(error.message||error):null,deletedRows};
+  if(error){
+    console.warn('Kinora library clear failed',error);
+    return false;
+  }
+  assistantDebug('library clear persisted',{deletedRows});
+  return true;
+};
+const clearAssistantLibraryMemory=async ()=>{
+  if(!confirm('Clear your entire Kinora movie library? This cannot be undone.'))return;
+  const beforeCounts=assistantStateCounts();
+  assistantDebug('library clear before',{beforeCounts,loggedIn:Boolean(currentUserId())});
+  let clearedOnline=true;
+  if(currentUserId()){
+    clearedOnline=await clearSupabaseMovieLibrary();
+    if(!clearedOnline){
+      await loadSupabaseLibrary();
+      assistantDebug('library clear failed',{supabaseResult:lastSupabaseLibraryResult,beforeCounts,afterCounts:assistantStateCounts()});
+      alert('Kinora could not clear your online movie library. Please try again.');
+      return;
+    }
+  }
+  try{
+    localStorage.removeItem(assistantStorageKey);
+    localStorage.removeItem(assistantLastVisibleKey);
+  }catch{}
+  setAssistantMemory(defaultAssistantMemory());
+  if(currentUserId())await loadSupabaseLibrary();
+  updateAssistantMemory();
+  preserveAssistantWall();
+  if(assistantMemory)assistantMemory.textContent='Your Kinora movie library is empty.';
+  alert('Your Kinora movie library has been cleared.');
+  assistantDebug('library clear after',{clearedOnline,supabaseResult:lastSupabaseLibraryResult,beforeCounts,afterCounts:assistantStateCounts()});
+};
 const setAssistantMemory=memory=>{
   const normalized=normalizeAssistantMemory(memory);
   try{localStorage.setItem(assistantStorageKey,JSON.stringify(normalized));}catch{}
@@ -1508,12 +1553,13 @@ const createMemoryListItem=(title,{type,rating,movie}={})=>{
   meta.className='taste-memory-meta';
   const year=movie?.year&&movie.year!=='TBA'?` · ${movie.year}`:'';
   meta.textContent=rating?`${rating}/10${year}`:`${assistantLifecycleLabels[type]||'Saved'}${year}`;
-  const remove=document.createElement('button');
-  remove.type='button';
-  remove.className='taste-memory-remove';
-  remove.textContent='Remove';
-  remove.addEventListener('click',()=>removeAssistantMemoryItem(type,title));
-  item.append(titleButton,meta,remove);
+  const statusAction=document.createElement('button');
+  statusAction.type='button';
+  statusAction.className='taste-memory-remove taste-memory-status-action';
+  statusAction.textContent=type==='rated'?'Remove rating':type==='watched'?'Watched':'Saved';
+  statusAction.setAttribute('aria-label',`${statusAction.textContent} ${title} from My Library`);
+  statusAction.addEventListener('click',()=>removeAssistantMemoryItem(type,title));
+  item.append(titleButton,meta,statusAction);
   return item;
 };
 const createMemoryGroup=(label,items,type,ratings={},movies={})=>{
@@ -1932,6 +1978,8 @@ let assistantStaticPackageCache=null;
 let assistantStaticPackagePromise=null;
 let movieCandidates=assistantMovieCache;
 let currentRecommendations=currentAssistantRecommendations;
+let previousResultIds=new Set();
+let recentlyShownIds=[];
 let userLibrary=defaultAssistantMemory();
 let savedMovies=[];
 let watchedMovies=[];
@@ -2666,6 +2714,52 @@ const uniqueAssistantMovies=movies=>{
     return true;
   });
 };
+const assistantResultId=movie=>{
+  const normalized=normalizeMovie(movie);
+  return String(movie.tmdbId||movie.id||`${normalized.title}-${normalized.year}`).toLowerCase();
+};
+const rememberAssistantRenderedResults=movies=>{
+  const ids=movies.map(assistantResultId).filter(Boolean);
+  previousResultIds=new Set(ids);
+  recentlyShownIds=[
+    ...ids,
+    ...recentlyShownIds.filter(id=>!ids.includes(id))
+  ].slice(0,40);
+  window.previousResultIds=[...previousResultIds];
+  window.recentlyShownIds=[...recentlyShownIds];
+};
+const weightedAssistantSelection=(rankedItems,visibleCount=5)=>{
+  const highScorePool=rankedItems.slice(0,Math.min(100,Math.max(30,rankedItems.length)));
+  const selected=[];
+  const selectedIds=new Set();
+  const scores=highScorePool.map(item=>Number(item.score)||0);
+  const minScore=Math.min(...scores,0);
+  const chooseOne=()=>{
+    const available=highScorePool.filter(item=>!selectedIds.has(assistantResultId(item.movie)));
+    if(!available.length)return null;
+    const weights=available.map(item=>{
+      const id=assistantResultId(item.movie);
+      const recentIndex=recentlyShownIds.indexOf(id);
+      const previousPenalty=previousResultIds.has(id)?22:0;
+      const recentPenalty=recentIndex>=0?Math.max(0,12-recentIndex*.35):0;
+      return Math.max(.25,(Number(item.score)||0)-minScore+1-previousPenalty-recentPenalty);
+    });
+    const total=weights.reduce((sum,weight)=>sum+weight,0);
+    let cursor=Math.random()*total;
+    for(let index=0;index<available.length;index+=1){
+      cursor-=weights[index];
+      if(cursor<=0)return available[index];
+    }
+    return available[available.length-1];
+  };
+  while(selected.length<visibleCount){
+    const item=chooseOne();
+    if(!item)break;
+    selectedIds.add(assistantResultId(item.movie));
+    selected.push(item);
+  }
+  return selected;
+};
 const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
   const selectedPlatform=normalizePlatform(answers.platform);
   const {movies:strictSource,counts}=filterAssistantCandidates(candidates,answers,memory);
@@ -2675,9 +2769,22 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
   const rankingSource=freshSource.length?freshSource:strictSource;
   const ranked=rankingSource
     .map(movie=>scoreAssistantMovieDetailed(movie,answers,memory,profile))
+    .map(item=>{
+      const id=assistantResultId(item.movie);
+      const recentIndex=recentlyShownIds.indexOf(id);
+      const recentPenalty=(previousResultIds.has(id)?30:0)+(recentIndex>=0?Math.max(0,16-recentIndex*.4):0);
+      return {
+        ...item,
+        score:item.score-recentPenalty,
+        movie:{
+          ...item.movie,
+          assistantScore:item.score-recentPenalty,
+          assistantRecentPenalty:recentPenalty
+        }
+      };
+    })
     .sort((a,b)=>b.score-a.score);
-  const offset=ranked.length>5?(assistantVariant*5)%Math.max(1,ranked.length-4):0;
-  const selected=ranked.slice(offset,offset+5).map(item=>item.movie);
+  const selected=weightedAssistantSelection(ranked,5).map(item=>item.movie);
   const pool=validateAssistantPool(selected,answers,memory);
   const bestScore=ranked[0]?.score||0;
   const fifthScore=ranked[4]?.score||0;
@@ -2688,6 +2795,9 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
     strictSourceCount:strictSource.length,
     libraryExactExcludedCount:strictSource.length-freshSource.length,
     libraryRepeatsAllowed:allowLibraryRepeats,
+    highScorePoolSize:Math.min(100,Math.max(30,ranked.length)),
+    previousResultIds:[...previousResultIds],
+    recentlyShownIds:recentlyShownIds.slice(0,12),
     finalRenderedCount:pool.length,
     finalResults:pool.map(movie=>({
       title:normalizeMovie(movie).title,
@@ -2697,6 +2807,7 @@ const getAssistantMoviePool=(candidates,answers,memory,{different=false}={})=>{
       passedGenreFilter:movieHasSelectedGenre(movie,answers),
       baseScore:Number(movie.assistantBaseScore||0).toFixed(2),
       personalizationScore:Number(movie.assistantPersonalizationScore||0).toFixed(2),
+      recentPenalty:Number(movie.assistantRecentPenalty||0).toFixed(2),
       score:Number(movie.assistantScore||0).toFixed(2)
     })),
     tasteProfile:{
@@ -2737,6 +2848,7 @@ const renderPosterWall=(movies,{preserveOnEmpty=false,skipValidation=false}={})=
   assistantResults.innerHTML='';
   setCurrentRecommendations(finalMovies);
   lastVisibleAssistantRecommendations=[...finalMovies];
+  rememberAssistantRenderedResults(finalMovies);
   saveLastVisibleAssistantWall(finalMovies);
   assistantDebug('rendered results',{results:finalMovies.map(movie=>({
     title:normalizeMovie(movie).title,
@@ -2856,7 +2968,7 @@ assistantForm?.addEventListener('submit',async event=>{
   updateMovieWall({scroll:true,different:false});
 });
 assistantRefreshButton?.addEventListener('click',()=>updateMovieWall({different:true,scroll:false}));
-document.querySelector('[data-clear-decision-memory]')?.addEventListener('click',()=>{try{localStorage.removeItem(assistantStorageKey);}catch{}updateAssistantMemory();});
+document.querySelector('[data-clear-decision-memory]')?.addEventListener('click',()=>{clearAssistantLibraryMemory();});
 assistantLibrarySearch?.addEventListener('input',updateAssistantMemory);
 if(assistantResults&&window.MutationObserver){
   new MutationObserver(()=>{
