@@ -616,6 +616,9 @@ const apiNotice = document.querySelector('[data-api-notice]');
 const radarWatchlistKey='futureMovieRadarWatchlist';
 const radarHiddenKey='futureMovieRadarHidden';
 const reminderEmailBackendActive=false;
+const reminderEmailProviderActive=false;
+console.info('Email scheduler configured:', reminderEmailBackendActive);
+console.info('Email provider configured:', reminderEmailProviderActive);
 const radarStoreArray=key=>getRadarStore(key).map(item=>typeof item==='string'?{title:item}:item).filter(item=>item&&item.title);
 const radarMovieKey=movie=>{
   const normalized=normalizeRadarMovie(movie);
@@ -666,6 +669,15 @@ const radarCreditsCache=new Map();
 const fillGenres = genres => { genres.forEach(genre => { const option=document.createElement('option'); option.value=genre.id; option.textContent=genre.name; genreFilter?.append(option); }); };
 const getRadarStore=key=>{try{return JSON.parse(localStorage.getItem(key)||'[]');}catch{return [];}};
 const setRadarStore=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value));}catch{}};
+const upsertReminderPayload=async payload=>{
+  const conflict=payload.tmdb_id?'user_id,tmdb_id':'user_id,movie_title,release_date';
+  let response=await supabaseClient.from('upcoming_movie_reminders').upsert(payload,{onConflict:conflict});
+  if(response.error&&/email/i.test(String(response.error.message||response.error))){
+    const {email: _email, ...legacyPayload}=payload;
+    response=await supabaseClient.from('upcoming_movie_reminders').upsert(legacyPayload,{onConflict:conflict});
+  }
+  return response;
+};
 const saveSupabaseReminder=async movie=>{
   if(!requireKinoraAuth('Log in to save this release reminder.'))return false;
   if(!supabaseClient){
@@ -684,16 +696,19 @@ const saveSupabaseReminder=async movie=>{
     reminder_status:'active',
     reminder_sent:false
   };
-  const {error}=await supabaseClient.from('upcoming_movie_reminders').upsert(payload,{onConflict:payload.tmdb_id?'user_id,tmdb_id':'user_id,movie_title,release_date'});
+  console.info('Email scheduler configured:', reminderEmailBackendActive);
+  console.info('Email provider configured:', reminderEmailProviderActive);
+  const {error}=await upsertReminderPayload(payload);
   if(error){
     console.warn('Release reminder save failed',error);
     if(comingStatus)comingStatus.textContent='Reminder could not be saved online. Please try again.';
     return false;
   }
   setRadarRecord(radarWatchlistKey,radarRecordFromMovie(normalized,{status:'active'}));
-  if(comingStatus)comingStatus.textContent=reminderEmailBackendActive?
-    'Reminder saved. Email notification will be sent by the release scheduler.':
-    'Reminder saved. Email notifications require backend scheduler setup.';
+  console.info('Reminder saved',{tmdbId:payload.tmdb_id,title:payload.movie_title,releaseDate:payload.release_date,emailSchedulerConfigured:reminderEmailBackendActive,emailProviderConfigured:reminderEmailProviderActive});
+  if(comingStatus)comingStatus.textContent=reminderEmailBackendActive&&reminderEmailProviderActive?
+    'Reminder saved successfully. Email notification will be sent by the release scheduler.':
+    'Reminder saved successfully. Email notifications are not configured yet.';
   return true;
 };
 const cancelSupabaseReminder=async record=>{
@@ -707,6 +722,7 @@ const cancelSupabaseReminder=async record=>{
     if(comingStatus)comingStatus.textContent='Reminder could not be cancelled online. Please try again.';
     return false;
   }
+  console.info('Reminder cancelled',{tmdbId:record.tmdbId||null,title:record.title});
   return true;
 };
 const saveSupabaseUpcomingPreference=async (movie,preference='not_interested')=>{
@@ -769,6 +785,7 @@ const loadSupabaseReminders=async ()=>{
   })).filter(item=>item.title));
   renderRadarLists();
   if(comingMovies.length)showComing(filterRadarMovies(comingMovies));
+  console.info('Reminder loaded',{count:(data||[]).length,emailSchedulerConfigured:reminderEmailBackendActive,emailProviderConfigured:reminderEmailProviderActive});
 };
 const radarMovieByTitle=title=>comingMovies.map(normalizeRadarMovie).find(movie=>movie.title===title);
 const renderRadarLists=()=>{
