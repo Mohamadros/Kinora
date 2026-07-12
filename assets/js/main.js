@@ -384,18 +384,91 @@ const movieGenreIds=movie=>{
   const source=movie.genre_ids||movie.genreIds||(movie.genres||[]).map(genre=>genre.id);
   return [...new Set((source||[]).map(id=>Number(id)).filter(id=>Number.isFinite(id)&&tmdbGenreNames[id]))];
 };
+const movieYearValue=movie=>{
+  const raw=movie?.release_date||movie?.releaseDate||movie?.year||'';
+  const year=Number(String(raw).slice(0,4));
+  return Number.isFinite(year)&&year>0?year:0;
+};
+const movieDecadeCategory=year=>{
+  const numeric=Number(year||0);
+  if(!numeric)return 'Unknown';
+  if(numeric<1980)return 'Classic';
+  if(numeric<1990)return '1980s';
+  if(numeric<2000)return '1990s';
+  if(numeric<2010)return '2000s';
+  if(numeric<2020)return '2010s';
+  return '2020s';
+};
+const movieRuntimeCategory=runtime=>{
+  const minutes=Number(runtime||0);
+  if(!minutes)return 'Unknown';
+  if(minutes<90)return 'Short';
+  if(minutes<=140)return 'Medium';
+  return 'Long';
+};
 const normalizeMovie = movie => ({
-  id: movie.id || null,
+  id: movie.id || movie.tmdbId || null,
+  tmdbId: movie.tmdbId || movie.id || null,
   title: movie.title,
-  year: (movie.release_date || movie.year || 'TBA').slice(0, 4),
+  year: String(movieYearValue(movie)||'TBA'),
   releaseDate: movie.release_date || movie.releaseDate || '',
   rating: Number(movie.vote_average ?? movie.rating ?? 0).toFixed(1),
   overview: movie.overview || 'Details will be announced closer to release.',
-  poster: movie.poster_path ? `${imageBase}${movie.poster_path}` : (movie.poster || posterFallback(movie.title)),
+  posterPath: movie.poster_path || movie.posterPath || '',
+  poster: (movie.poster_path||movie.posterPath) ? `${imageBase}${movie.poster_path||movie.posterPath}` : (movie.posterUrl || movie.poster || posterFallback(movie.title)),
   genreIds: movieGenreIds(movie),
   genre: movie.genre || movieGenreIds(movie).slice(0, 2).map(id => genreNames[id]).filter(Boolean).join(' · '),
+  runtime: Number(movie.runtime||0),
+  popularity: Number(movie.popularity||0),
   trailerQuery: movie.trailerQuery || `${movie.title} official trailer`
 });
+const normalizeCategorizedMovie=rawMovie=>{
+  const normalized=normalizeMovie(rawMovie||{});
+  const genreIds=movieGenreIds(rawMovie||normalized);
+  const genreNamesList=genreIds.map(id=>genreNames[id]||tmdbGenreNames[id]).filter(Boolean);
+  const year=movieYearValue(rawMovie||normalized);
+  const runtime=Number(rawMovie?.runtime||normalized.runtime||0);
+  const moodTags=[...new Set(rawMovie?.moodTags||rawMovie?.moods||[])];
+  const movieForMood={...normalized,...rawMovie,genreIds,genre:genreNamesList.join(' · '),runtime};
+  const inferredMoods=moodTags.length?moodTags:inferAssistantMoods(movieForMood);
+  const toneTags=[...new Set(rawMovie?.toneTags||inferredMoods||[])];
+  return {
+    ...rawMovie,
+    ...normalized,
+    id:rawMovie?.id||rawMovie?.tmdbId||normalized.id,
+    tmdbId:rawMovie?.tmdbId||rawMovie?.id||normalized.tmdbId,
+    title:normalized.title||rawMovie?.name||'',
+    year:year?String(year):'TBA',
+    releaseDate:normalized.releaseDate||rawMovie?.release_date||rawMovie?.releaseDate||'',
+    release_date:normalized.releaseDate||rawMovie?.release_date||rawMovie?.releaseDate||'',
+    runtime,
+    genreIds,
+    genre_names:genreNamesList,
+    genreNames:genreNamesList,
+    genre:genreNamesList.join(' · ')||normalized.genre||'Film',
+    moodTags:inferredMoods,
+    moods:inferredMoods,
+    toneTags,
+    decade:movieDecadeCategory(year),
+    runtimeCategory:movieRuntimeCategory(runtime),
+    popularity:Number(rawMovie?.popularity||normalized.popularity||0),
+    voteAverage:Number(rawMovie?.vote_average??rawMovie?.voteAverage??normalized.rating??0),
+    vote_average:Number(rawMovie?.vote_average??rawMovie?.voteAverage??normalized.rating??0),
+    rating:Number(rawMovie?.vote_average??rawMovie?.voteAverage??normalized.rating??0).toFixed(1),
+    posterPath:normalized.posterPath,
+    poster_path:normalized.posterPath,
+    posterUrl:normalized.poster,
+    poster:normalized.poster,
+    overview:normalized.overview,
+    categories:{
+      genres:genreNamesList,
+      decade:movieDecadeCategory(year),
+      runtime:movieRuntimeCategory(runtime),
+      moods:inferredMoods,
+      tones:toneTags
+    }
+  };
+};
 
 const createMovieCard = rawMovie => {
   const movie = normalizeMovie(rawMovie);
@@ -957,7 +1030,7 @@ const closeMovieDetailToMatch=()=>{
   if(trailerDialog?.open)closeTrailer();
   requestAnimationFrame(()=>{
     const target=assistantPanel&&!assistantPanel.hidden?assistantPanel:assistantForm;
-    target?.scrollIntoView({behavior:'smooth',block:'start'});
+    target?.scrollIntoView({behavior:'auto',block:'start'});
     assistantResults?.querySelector('.wall-poster')?.focus({preventScroll:true});
   });
 };
@@ -1662,12 +1735,22 @@ const sharedCount=(left=[],right=[])=>{
   return left.filter(item=>rightSet.has(item)).length;
 };
 const movieSimilarityScore=(candidate,memoryMovie)=>{
-  const candidateMovie=normalizeMovie(candidate);
-  const remembered=normalizeMovie(memoryMovie);
-  const genreOverlap=sharedCount(candidateMovie.genreIds||[],remembered.genreIds||[]);
-  const moodOverlap=sharedCount(candidate.moods||[],memoryMovie.moods||[]);
-  const textMatch=normalizeAssistantText(candidateMovie).includes(String(remembered.title||'').toLowerCase())?1:0;
-  return genreOverlap*1.6+moodOverlap*2.2+textMatch;
+  const candidateMovie=normalizeCategorizedMovie(candidate);
+  const remembered=normalizeCategorizedMovie(memoryMovie);
+  const candidateGenres=candidateMovie.genreIds||[];
+  const rememberedGenres=remembered.genreIds||[];
+  let score=0;
+  if(candidateGenres[0]&&candidateGenres[0]===rememberedGenres[0])score+=40;
+  score+=sharedCount(candidateGenres.slice(1),rememberedGenres.slice(1))*20;
+  score+=sharedCount(candidateMovie.moodTags||[],remembered.moodTags||[])*15;
+  score+=sharedCount(candidateMovie.toneTags||[],remembered.toneTags||[])*10;
+  if(candidateMovie.decade&&candidateMovie.decade===remembered.decade)score+=8;
+  if(candidateMovie.runtimeCategory&&candidateMovie.runtimeCategory===remembered.runtimeCategory)score+=5;
+  const ratingGap=Math.abs(Number(candidateMovie.voteAverage||0)-Number(remembered.voteAverage||0));
+  if(Number.isFinite(ratingGap)&&ratingGap<=1.2)score+=4;
+  const popularityGap=Math.abs(Number(candidateMovie.popularity||0)-Number(remembered.popularity||0));
+  if(Number.isFinite(popularityGap)&&popularityGap<=25)score+=2;
+  return score;
 };
 const ratingTasteWeight=rating=>{
   const score=Number(rating||0);
@@ -1885,7 +1968,6 @@ const movieHasSelectedRuntime=(movie,answers)=>answers.time==='any'||movieMatche
 const movieHasSelectedPlatform=(movie,answers,memory)=>{
   const platform=normalizePlatform(answers.platform);
   if(!platform)return true;
-  if(platform==='library')return true;
   return platformValues(movie).length>0&&movieMatchesPlatform(movie,answers.platform);
 };
 const assistantLibraryMovies=memory=>{
@@ -2031,19 +2113,13 @@ const updateAssistantPersonalizationNote=(profile=computeAssistantTasteProfile(g
 };
 const assistantCacheKeyForMovie=movie=>String(movie.tmdbId||movie.id||`${movie.title}-${movie.year||movie.release_date||''}`).toLowerCase();
 const normalizeAssistantCacheMovie=(rawMovie,platform='')=>{
-  const movie=enrichAssistantMovie(rawMovie,platform);
+  const enriched=enrichAssistantMovie(rawMovie||{},platform);
+  const movie=normalizeCategorizedMovie(enriched);
   return {
     ...movie,
-    tmdbId:rawMovie.tmdbId||rawMovie.id||movie.id,
-    id:rawMovie.id||rawMovie.tmdbId||movie.id,
-    voteAverage:Number(rawMovie.vote_average??rawMovie.voteAverage??movie.rating??0),
-    vote_average:Number(rawMovie.vote_average??rawMovie.voteAverage??movie.rating??0),
-    popularity:Number(rawMovie.popularity||movie.popularity||0),
-    releaseDate:movie.releaseDate||movie.release_date||rawMovie.release_date||'',
-    release_date:movie.releaseDate||movie.release_date||rawMovie.release_date||'',
-    posterUrl:movie.poster,
-    moodTags:movie.moods||[],
-    toneTags:movie.moods||[]
+    platforms:platform?[platform]:(rawMovie?.platforms||(rawMovie?.platform?[rawMovie.platform]:movie.platforms||[])),
+    age:rawMovie?.age||movie.age,
+    trailerQuery:movie.trailerQuery||`${movie.title} official trailer`
   };
 };
 const loadAssistantMovieCache=()=>{
@@ -2371,6 +2447,33 @@ const preserveAssistantWall=()=>{
   }
   scheduleAssistantWallRecovery('preserve wall');
 };
+const rescoreAssistantWallSafely=async reason=>{
+  if(!assistantPanel||assistantPanel.hidden||!assistantResults)return false;
+  const answers=getAssistantFilters();
+  const memory=getAssistantMemory();
+  const sources=[
+    movieCandidates,
+    assistantMovieCache,
+    loadAssistantMovieCache(),
+    await loadAssistantStaticPackage(),
+    assistantFallback
+  ];
+  for(const source of sources){
+    if(!source?.length)continue;
+    try{
+      const {pool}=getAssistantMoviePool(source,answers,memory,{different:false});
+      if(pool.length&&renderPosterWall(pool,{preserveOnEmpty:true})){
+        assistantDebug('rescored wall after action',{reason,recommendationCount:pool.length,...assistantStateCounts()});
+        return true;
+      }
+    }catch(error){
+      assistantDebug('rescore source failed',{reason,message:String(error),sourceCount:source.length});
+    }
+  }
+  preserveAssistantWall();
+  assistantDebug('rescore kept existing wall',{reason,...assistantStateCounts()});
+  return assistantWallHasMovieCards();
+};
 const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false})=>{
   const normalized=normalizeMovie(movie);
   const actionType=remove?'remove':(status==='rated'?'rate':status);
@@ -2440,6 +2543,7 @@ const openMovieDetails=async movie=>{
   const ratingQuestion=document.createElement('p'); ratingQuestion.textContent='How would you rate this movie?';
   const ratingScale=document.createElement('div'); ratingScale.className='watched-rating-scale';
   const ratingStatus=document.createElement('small'); ratingStatus.className='watched-rating-status';
+  const skipRating=document.createElement('button'); skipRating.type='button'; skipRating.className='watched-rating-skip'; skipRating.textContent='Skip rating';
   const libraryStatus=document.createElement('p'); libraryStatus.className='movie-detail-library-status'; libraryStatus.setAttribute('role','status');
   Array.from({length:10},(_,index)=>index+1).forEach(score=>{
     const button=document.createElement('button');
@@ -2448,14 +2552,18 @@ const openMovieDetails=async movie=>{
     button.setAttribute('aria-label',`Rate ${normalized.title} ${score} out of 10`);
     button.addEventListener('click',async()=>{
       if(!requireKinoraAuth())return;
+      button.disabled=true;
       await mutateAssistantLibrary({movie,status:'rated',rating:score});
       sync();
       ratingStatus.textContent=`Your rating: ${score}/10`;
       libraryStatus.textContent=`Rating saved: ${score}/10.`;
+      await rescoreAssistantWallSafely('rating saved');
+      closeMovieDetailToMatch();
     });
     ratingScale.append(button);
   });
-  ratingPanel.append(ratingQuestion,ratingScale,ratingStatus);
+  skipRating.addEventListener('click',closeMovieDetailToMatch);
+  ratingPanel.append(ratingQuestion,ratingScale,skipRating,ratingStatus);
   const sync=()=>{
     const memory=getAssistantMemory();
     const status=memory.items?.[normalized.title]?.status||'';
@@ -2472,8 +2580,26 @@ const openMovieDetails=async movie=>{
       status==='saved'?'Saved to My Library.':
       'Not saved in My Library yet.';
   };
-  save.addEventListener('click',async()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const isActive=Boolean(next.items?.[normalized.title]);await mutateAssistantLibrary({movie,status:'saved',remove:isActive});sync();});
-  watched.addEventListener('click',async()=>{if(!requireKinoraAuth())return;const next=getAssistantMemory();const status=next.items?.[normalized.title]?.status;await mutateAssistantLibrary({movie,status:'watched',remove:status==='watched'||status==='rated'});sync();});
+  save.addEventListener('click',async()=>{
+    if(!requireKinoraAuth())return;
+    const next=getAssistantMemory();
+    const isActive=Boolean(next.items?.[normalized.title]);
+    save.disabled=true;
+    await mutateAssistantLibrary({movie,status:'saved',remove:isActive});
+    sync();
+    libraryStatus.textContent=isActive?'Removed from My Library.':'Saved to My Library.';
+    preserveAssistantWall();
+    closeMovieDetailToMatch();
+  });
+  watched.addEventListener('click',async()=>{
+    if(!requireKinoraAuth())return;
+    watched.disabled=true;
+    await mutateAssistantLibrary({movie,status:'watched',remove:false});
+    sync();
+    watched.disabled=false;
+    ratingPanel.hidden=false;
+    ratingPanel.querySelector('button')?.focus({preventScroll:true});
+  });
   trailer.addEventListener('click',()=>openTrailer(normalized));
   backToMatch.addEventListener('click',closeMovieDetailToMatch);
   actions.append(save,watched,trailer,communityButton,backToMatch); detail.append(title,meta,storyLabel,overview,ratings,libraryStatus,actions,ratingPanel); content.append(detail); message.textContent=''; sync(); trailerDialog.showModal();
