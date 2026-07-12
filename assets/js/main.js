@@ -616,6 +616,44 @@ const apiNotice = document.querySelector('[data-api-notice]');
 const radarWatchlistKey='futureMovieRadarWatchlist';
 const radarHiddenKey='futureMovieRadarHidden';
 const reminderEmailBackendActive=false;
+const radarStoreArray=key=>getRadarStore(key).map(item=>typeof item==='string'?{title:item}:item).filter(item=>item&&item.title);
+const radarMovieKey=movie=>{
+  const normalized=normalizeRadarMovie(movie);
+  return String(normalized.id||normalized.tmdbId||`${normalized.title}-${normalized.releaseDate||normalized.year||''}`).toLowerCase();
+};
+const radarRecordFromMovie=(movie,extra={})=>{
+  const normalized=normalizeRadarMovie(movie);
+  return {
+    key:radarMovieKey(normalized),
+    tmdbId:normalized.id||normalized.tmdbId||null,
+    title:normalized.title,
+    releaseDate:normalized.releaseDate||normalized.release_date||'',
+    year:normalized.year||'',
+    poster:normalized.poster||posterFallback(normalized.title),
+    status:extra.status||'active',
+    reminderSent:Boolean(extra.reminderSent),
+    ...extra
+  };
+};
+const radarRecordMatchesMovie=(record,movie)=>{
+  if(!record||!movie)return false;
+  const key=radarMovieKey(movie);
+  return String(record.key||'')===key||
+    (record.tmdbId&&String(record.tmdbId)===String(movie.id||movie.tmdbId))||
+    record.title===normalizeRadarMovie(movie).title;
+};
+const radarWatchlistRecords=()=>radarStoreArray(radarWatchlistKey);
+const radarHiddenRecords=()=>radarStoreArray(radarHiddenKey);
+const setRadarRecord=(key,record)=>{
+  const records=radarStoreArray(key).filter(item=>item.key!==record.key&&item.title!==record.title);
+  records.unshift(record);
+  setRadarStore(key,records);
+};
+const removeRadarRecord=(key,recordOrTitle)=>{
+  const title=typeof recordOrTitle==='string'?recordOrTitle:recordOrTitle?.title;
+  const recordKey=typeof recordOrTitle==='string'?'':recordOrTitle?.key;
+  setRadarStore(key,radarStoreArray(key).filter(item=>item.title!==title&&(!recordKey||item.key!==recordKey)));
+};
 let comingMovies = [];
 let comingPage = 0;
 let comingTotalPages = 1;
@@ -639,6 +677,7 @@ const saveSupabaseReminder=async movie=>{
     user_id:currentUserId(),
     tmdb_id:normalized.id||normalized.tmdbId||null,
     movie_title:normalized.title,
+    email:kinoraSession?.user?.email||authUser?.email||null,
     poster_url:normalized.poster||null,
     poster_path:movie.poster_path||null,
     release_date:normalized.releaseDate||normalized.release_date||null,
@@ -651,27 +690,91 @@ const saveSupabaseReminder=async movie=>{
     if(comingStatus)comingStatus.textContent='Reminder could not be saved online. Please try again.';
     return false;
   }
-  const next=new Set(getRadarStore(radarWatchlistKey));
-  next.add(normalized.title);
-  setRadarStore(radarWatchlistKey,[...next]);
+  setRadarRecord(radarWatchlistKey,radarRecordFromMovie(normalized,{status:'active'}));
   if(comingStatus)comingStatus.textContent=reminderEmailBackendActive?
     'Reminder saved. Email notification will be sent by the release scheduler.':
     'Reminder saved. Email notifications require backend scheduler setup.';
   return true;
 };
+const cancelSupabaseReminder=async record=>{
+  if(!supabaseClient||!currentUserId())return false;
+  let query=supabaseClient.from('upcoming_movie_reminders').update({reminder_status:'cancelled'}).eq('user_id',currentUserId());
+  if(record.tmdbId)query=query.eq('tmdb_id',record.tmdbId);
+  else query=query.eq('movie_title',record.title);
+  const {error}=await query;
+  if(error){
+    console.warn('Release reminder cancel failed',error);
+    if(comingStatus)comingStatus.textContent='Reminder could not be cancelled online. Please try again.';
+    return false;
+  }
+  return true;
+};
+const saveSupabaseUpcomingPreference=async (movie,preference='not_interested')=>{
+  if(!supabaseClient||!currentUserId())return false;
+  const normalized=normalizeRadarMovie(movie);
+  const payload={
+    user_id:currentUserId(),
+    tmdb_id:normalized.id||normalized.tmdbId||null,
+    movie_title:normalized.title,
+    release_date:normalized.releaseDate||normalized.release_date||null,
+    poster_url:normalized.poster||null,
+    preference
+  };
+  const {error}=await supabaseClient.from('upcoming_movie_preferences').upsert(payload,{onConflict:payload.tmdb_id?'user_id,tmdb_id,preference':'user_id,movie_title,release_date,preference'});
+  if(error){
+    console.warn('Upcoming preference save failed',error);
+    return false;
+  }
+  return true;
+};
+const deleteSupabaseUpcomingPreference=async record=>{
+  if(!supabaseClient||!currentUserId())return false;
+  let query=supabaseClient.from('upcoming_movie_preferences').delete().eq('user_id',currentUserId()).eq('preference','not_interested');
+  if(record.tmdbId)query=query.eq('tmdb_id',record.tmdbId);
+  else query=query.eq('movie_title',record.title);
+  const {error}=await query;
+  if(error){
+    console.warn('Upcoming preference delete failed',error);
+    return false;
+  }
+  return true;
+};
+const loadSupabaseUpcomingPreferences=async ()=>{
+  if(!supabaseClient||!currentUserId())return;
+  const {data,error}=await supabaseClient.from('upcoming_movie_preferences').select('*').eq('user_id',currentUserId()).eq('preference','not_interested');
+  if(error){console.warn('Upcoming preferences load failed',error);return;}
+  setRadarStore(radarHiddenKey,(data||[]).map(item=>({
+    key:String(item.tmdb_id||`${item.movie_title}-${item.release_date||''}`).toLowerCase(),
+    tmdbId:item.tmdb_id,
+    title:item.movie_title,
+    releaseDate:item.release_date||'',
+    poster:item.poster_url||posterFallback(item.movie_title),
+    status:'not_interested'
+  })).filter(item=>item.title));
+  renderRadarLists();
+  if(comingMovies.length)showComing(filterRadarMovies(comingMovies));
+};
 const loadSupabaseReminders=async ()=>{
   if(!supabaseClient||!currentUserId())return;
-  const {data,error}=await supabaseClient.from('upcoming_movie_reminders').select('*').eq('user_id',currentUserId()).eq('reminder_status','active');
+  const {data,error}=await supabaseClient.from('upcoming_movie_reminders').select('*').eq('user_id',currentUserId()).in('reminder_status',['active','sent']);
   if(error){console.warn('Release reminders load failed',error);return;}
-  setRadarStore(radarWatchlistKey,(data||[]).map(item=>item.movie_title).filter(Boolean));
+  setRadarStore(radarWatchlistKey,(data||[]).map(item=>({
+    key:String(item.tmdb_id||`${item.movie_title}-${item.release_date||''}`).toLowerCase(),
+    tmdbId:item.tmdb_id,
+    title:item.movie_title,
+    releaseDate:item.release_date||'',
+    poster:item.poster_url||communityPosterFromPath(item.poster_path,item.movie_title),
+    status:item.reminder_status||'active',
+    reminderSent:Boolean(item.reminder_sent)
+  })).filter(item=>item.title));
   renderRadarLists();
   if(comingMovies.length)showComing(filterRadarMovies(comingMovies));
 };
 const radarMovieByTitle=title=>comingMovies.map(normalizeRadarMovie).find(movie=>movie.title===title);
 const renderRadarLists=()=>{
   if(!radarLists)return;
-  const watchlist=getRadarStore(radarWatchlistKey);
-  const hidden=getRadarStore(radarHiddenKey);
+  const watchlist=radarWatchlistRecords();
+  const hidden=radarHiddenRecords();
   radarLists.replaceChildren();
   if(!watchlist.length&&!hidden.length){
     radarLists.hidden=true;
@@ -680,7 +783,7 @@ const renderRadarLists=()=>{
   radarLists.hidden=false;
   const makeGroup=(title,items,type)=>{
     const group=document.createElement('section');
-    group.className='radar-list-group';
+    group.className='radar-list-group taste-memory-group';
     const heading=document.createElement('h3');
     heading.textContent=`${title} (${items.length})`;
     const list=document.createElement('ul');
@@ -690,20 +793,41 @@ const renderRadarLists=()=>{
       empty.textContent='Nothing here yet.';
       list.append(empty);
     }
-    items.forEach(item=>{
+    items.forEach(record=>{
       const li=document.createElement('li');
-      const name=document.createElement('span');
-      name.textContent=item;
+      li.className='radar-memory-item taste-memory-item';
+      const poster=document.createElement('img');
+      poster.className='radar-memory-poster';
+      poster.src=record.poster||posterFallback(record.title);
+      poster.alt=`Poster for ${record.title}`;
+      poster.loading='lazy';
+      poster.addEventListener('error',()=>{poster.src=posterFallback(record.title)},{once:true});
+      const copy=document.createElement('span');
+      copy.className='radar-memory-copy';
+      const name=document.createElement('strong');
+      name.className='taste-memory-title';
+      name.textContent=record.title;
+      const meta=document.createElement('small');
+      meta.className='taste-memory-meta';
+      const date=record.releaseDate||record.year||'Date TBA';
+      meta.textContent=type==='hidden'?`NOT INTERESTED · ${date}`:
+        record.reminderSent||record.status==='sent'?`EMAIL SENT · ${date}`:
+        record.status==='cancelled'?`REMINDER CANCELLED · ${date}`:
+        `REMINDER SAVED · ${date}`;
+      copy.append(name,meta);
       const action=document.createElement('button');
       action.type='button';
-      action.textContent=type==='hidden'?'Restore':'Remove';
-      action.addEventListener('click',()=>{
+      action.className='taste-memory-remove taste-memory-status-action';
+      action.textContent=type==='hidden'?'Undo':'Remove reminder';
+      action.addEventListener('click',async()=>{
+        if(type==='watchlist'&&currentUserId())await cancelSupabaseReminder(record);
+        if(type==='hidden'&&currentUserId())await deleteSupabaseUpcomingPreference(record);
         const key=type==='hidden'?radarHiddenKey:radarWatchlistKey;
-        setRadarStore(key,getRadarStore(key).filter(title=>title!==item));
+        removeRadarRecord(key,record);
         renderRadarLists();
         showComing(filterRadarMovies(comingMovies));
       });
-      li.append(name,action);
+      li.append(poster,copy,action);
       list.append(li);
     });
     group.append(heading,list);
@@ -755,7 +879,7 @@ const radarDateRange=(value)=>{
   return {gte:today,lte:''};
 };
 const filterRadarMovies=(movies,filters=getRadarFilters())=>{
-  const hidden=new Set(getRadarStore(radarHiddenKey));
+  const hidden=radarHiddenRecords();
   return movies.map(normalizeRadarMovie).filter(movie=>{
     const searchable=`${movie.title} ${movie.overview} ${movie.genre} ${movie.director} ${movie.actors}`.toLowerCase();
     const genreMatch=!filters.genre||movie.genreIds.includes(Number(filters.genre));
@@ -763,7 +887,7 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
     const releaseDate=movie.releaseDate||movie.release_date||'';
     const dateMatch=!releaseDate||(!range.gte||releaseDate>=range.gte)&&(!range.lte||releaseDate<=range.lte);
     const buzzMatch=!filters.anticipated||(filters.anticipated==='high'?movie.buzz==='High':buzzRank(movie.buzz)>=2);
-    return !hidden.has(movie.title)&&
+    return !hidden.some(record=>radarRecordMatchesMovie(record,movie))&&
       (!filters.query||searchable.includes(filters.query))&&
       genreMatch&&
       dateMatch&&
@@ -797,7 +921,9 @@ const hydrateRadarCredits=async (movie,directorNode,actorsNode)=>{
 };
 const createRadarCard=rawMovie=>{
   const movie=normalizeRadarMovie(rawMovie);
-  const watchlist=new Set(getRadarStore(radarWatchlistKey));
+  const watchlist=radarWatchlistRecords();
+  const reminderRecord=watchlist.find(record=>radarRecordMatchesMovie(record,movie));
+  const reminderActive=Boolean(reminderRecord);
   const card=document.createElement('article');
   card.className='radar-card movie-card';
   card.dataset.buzz=movie.buzz.toLowerCase();
@@ -840,38 +966,44 @@ const createRadarCard=rawMovie=>{
   const actions=document.createElement('div');
   actions.className='radar-actions';
   const watch=document.createElement('button');
-  watch.type='button'; watch.className='watchlist-button'; watch.textContent=watchlist.has(movie.title)?'Reminder saved':'Save release reminder';
+  watch.type='button'; watch.className='watchlist-button'; watch.textContent=reminderActive?'REMINDER SAVED':'SAVE REMINDER';
   watch.addEventListener('click',async()=>{
     if(!currentUserId()){
       requireKinoraAuth('Log in to save this release reminder.');
       return;
     }
+    const activeRecord=radarWatchlistRecords().find(record=>radarRecordMatchesMovie(record,movie));
+    if(activeRecord){
+      if(await cancelSupabaseReminder(activeRecord)){
+        removeRadarRecord(radarWatchlistKey,activeRecord);
+        watch.textContent='SAVE REMINDER';
+        watch.classList.remove('is-active');
+        if(comingStatus)comingStatus.textContent='Release reminder cancelled.';
+        renderRadarLists();
+      }
+      return;
+    }
     if(await saveSupabaseReminder(movie)){
-      watch.textContent='Reminder saved';
+      watch.textContent='REMINDER SAVED';
       watch.classList.add('is-active');
       renderRadarLists();
       return;
     }
-    const next=new Set(getRadarStore(radarWatchlistKey));
-    next.has(movie.title)?next.delete(movie.title):next.add(movie.title);
-    setRadarStore(radarWatchlistKey,[...next]);
-    if(next.has(movie.title)){
-      setRadarStore(radarHiddenKey,getRadarStore(radarHiddenKey).filter(title=>title!==movie.title));
-    }
-    watch.textContent=next.has(movie.title)?'Reminder saved':'Save release reminder';
-    watch.classList.toggle('is-active',next.has(movie.title));
-    renderRadarLists();
   });
-  watch.classList.toggle('is-active',watchlist.has(movie.title));
+  watch.classList.toggle('is-active',reminderActive);
   const trailer=document.createElement('button');
   trailer.type='button'; trailer.className='trailer-button'; trailer.innerHTML='<span aria-hidden="true">▶</span> Trailer';
   trailer.addEventListener('click',()=>openTrailer(movie));
   const hide=document.createElement('button');
   hide.type='button'; hide.className='not-interested-button'; hide.textContent='Not interested';
-  hide.addEventListener('click',()=>{
-    const hidden=new Set(getRadarStore(radarHiddenKey));
-    hidden.add(movie.title); setRadarStore(radarHiddenKey,[...hidden]);
-    setRadarStore(radarWatchlistKey,getRadarStore(radarWatchlistKey).filter(title=>title!==movie.title));
+  hide.addEventListener('click',async()=>{
+    if(!currentUserId()){
+      requireKinoraAuth('Log in to save Not Interested preferences.');
+      return;
+    }
+    setRadarRecord(radarHiddenKey,radarRecordFromMovie(movie,{status:'not_interested'}));
+    await saveSupabaseUpcomingPreference(movie,'not_interested');
+    removeRadarRecord(radarWatchlistKey,radarRecordFromMovie(movie));
     renderRadarLists();
     showComing(filterRadarMovies(comingMovies));
   });
@@ -1556,7 +1688,7 @@ const createMemoryListItem=(title,{type,rating,movie}={})=>{
   const statusAction=document.createElement('button');
   statusAction.type='button';
   statusAction.className='taste-memory-remove taste-memory-status-action';
-  statusAction.textContent=type==='rated'?'Unrate':type==='watched'?'Unwatch':'Unsave';
+  statusAction.textContent=type==='rated'?'Unrate':type==='watched'?'WATCHED':'Unsave';
   statusAction.setAttribute('aria-label',`${statusAction.textContent} ${title} from My Library`);
   statusAction.addEventListener('click',()=>removeAssistantMemoryItem(type,title));
   item.append(titleButton,meta,statusAction);
@@ -2071,6 +2203,11 @@ const filterAssistantCandidates=(candidates,answers,memory,{context='filter pipe
       console.info('Platform filter skipped: no platform data available.');
     }
   }
+  const hiddenRadar=radarHiddenRecords();
+  const afterNotInterested=hiddenRadar.length?afterPlatform.filter(movie=>{
+    const normalized=normalizeMovie(movie);
+    return !hiddenRadar.some(record=>String(record.title||'').toLowerCase()===normalized.title.toLowerCase());
+  }):afterPlatform;
   const counts={
     dataSource:window.movieMatchActiveDataSource||'unknown',
     loggedIn:Boolean(currentUserId()),
@@ -2084,12 +2221,13 @@ const filterAssistantCandidates=(candidates,answers,memory,{context='filter pipe
     countAfterYearFilter:afterYear.length,
     countAfterRuntimeFilter:afterRuntime.length,
     countAfterPlatformFilter:afterPlatform.length,
+    countAfterNotInterestedFilter:afterNotInterested.length,
     platformDataCount,
     platformSkipped,
     libraryCount:Object.keys(memory.items||{}).length
   };
   assistantDebug(context,counts);
-  return {movies:afterPlatform,counts};
+  return {movies:afterNotInterested,counts};
 };
 const validateAssistantPool=(movies,answers,memory)=>{
   const valid=filterAssistantCandidates(movies,answers,memory,{context:'final render filter guard'}).movies;
@@ -2611,7 +2749,7 @@ const openMovieDetails=async movie=>{
   });
   const actions=document.createElement('div'); actions.className='assistant-actions detail-actions';
   const save=document.createElement('button'); save.type='button'; save.textContent='Save';
-  const watched=document.createElement('button'); watched.type='button'; watched.textContent='Watch';
+  const watched=document.createElement('button'); watched.type='button'; watched.textContent='WATCH';
   const trailer=document.createElement('button'); trailer.type='button'; trailer.textContent='Trailer';
   const backToMatch=document.createElement('button'); backToMatch.type='button'; backToMatch.textContent='Back to Movie Match';
   const communityMatches=communityReviewsForMovie(normalized);
@@ -2627,7 +2765,7 @@ const openMovieDetails=async movie=>{
   const ratingQuestion=document.createElement('p'); ratingQuestion.textContent='How would you rate this movie?';
   const ratingScale=document.createElement('div'); ratingScale.className='watched-rating-scale';
   const ratingStatus=document.createElement('small'); ratingStatus.className='watched-rating-status';
-  const skipRating=document.createElement('button'); skipRating.type='button'; skipRating.className='watched-rating-skip'; skipRating.textContent='Close without rating';
+  const skipRating=document.createElement('button'); skipRating.type='button'; skipRating.className='watched-rating-skip'; skipRating.textContent='Skip rating';
   const libraryStatus=document.createElement('p'); libraryStatus.className='movie-detail-library-status'; libraryStatus.setAttribute('role','status');
   Array.from({length:10},(_,index)=>index+1).forEach(score=>{
     const button=document.createElement('button');
@@ -2656,7 +2794,7 @@ const openMovieDetails=async movie=>{
     watched.classList.toggle('is-active',status==='watched'||status==='rated');
     save.disabled=status==='watched'||status==='rated';
     save.textContent=status==='saved'?'Unsave':status==='watched'||status==='rated'?'In Library':'Save';
-    watched.textContent=status==='watched'||status==='rated'?'Unwatch':'Watch';
+    watched.textContent=status==='watched'||status==='rated'?'WATCHED':'WATCH';
     ratingPanel.hidden=!(status==='watched'||status==='rated');
     ratingScale.querySelectorAll('button').forEach((button,index)=>button.classList.toggle('is-active',index+1===userRating));
     ratingStatus.textContent=userRating?`Your rating: ${userRating}/10`:'';
@@ -3554,7 +3692,7 @@ communityForm?.addEventListener('submit',async event=>{
 });
 const refreshKinoraPersonalData=async()=>{
   if(!currentUserId())return;
-  await Promise.all([loadSupabaseLibrary(),loadSupabaseReminders(),loadSupabaseCommunityReviews()]);
+  await Promise.all([loadSupabaseLibrary(),loadSupabaseReminders(),loadSupabaseUpcomingPreferences(),loadSupabaseCommunityReviews()]);
 };
 document.addEventListener('kinora-auth-change',refreshKinoraPersonalData);
 setTimeout(refreshKinoraPersonalData,500);

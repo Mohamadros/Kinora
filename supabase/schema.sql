@@ -61,6 +61,7 @@ create table if not exists public.upcoming_movie_reminders (
   user_id uuid not null references auth.users(id) on delete cascade,
   tmdb_id bigint,
   movie_title text not null,
+  email text,
   poster_url text,
   poster_path text,
   release_date date,
@@ -71,6 +72,23 @@ create table if not exists public.upcoming_movie_reminders (
   updated_at timestamptz not null default now(),
   unique (user_id, tmdb_id),
   unique (user_id, movie_title, release_date)
+);
+
+alter table public.upcoming_movie_reminders
+add column if not exists email text;
+
+create table if not exists public.upcoming_movie_preferences (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  tmdb_id bigint,
+  movie_title text not null,
+  release_date date,
+  poster_url text,
+  preference text not null check (preference in ('not_interested')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, tmdb_id, preference),
+  unique (user_id, movie_title, release_date, preference)
 );
 
 create or replace function public.handle_new_user()
@@ -100,6 +118,7 @@ alter table public.profiles enable row level security;
 alter table public.movie_library enable row level security;
 alter table public.community_reviews enable row level security;
 alter table public.upcoming_movie_reminders enable row level security;
+alter table public.upcoming_movie_preferences enable row level security;
 
 drop policy if exists "Profiles are readable" on public.profiles;
 create policy "Profiles are readable"
@@ -180,6 +199,28 @@ create policy "Users delete own reminders"
 on public.upcoming_movie_reminders for delete
 using (auth.uid() = user_id);
 
+drop policy if exists "Users read own upcoming preferences" on public.upcoming_movie_preferences;
+create policy "Users read own upcoming preferences"
+on public.upcoming_movie_preferences for select
+using (auth.uid() = user_id);
+
+drop policy if exists "Users create own upcoming preferences" on public.upcoming_movie_preferences;
+create policy "Users create own upcoming preferences"
+on public.upcoming_movie_preferences for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "Users update own upcoming preferences" on public.upcoming_movie_preferences;
+create policy "Users update own upcoming preferences"
+on public.upcoming_movie_preferences for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "Users delete own upcoming preferences" on public.upcoming_movie_preferences;
+create policy "Users delete own upcoming preferences"
+on public.upcoming_movie_preferences for delete
+using (auth.uid() = user_id);
+
 create index if not exists movie_library_user_status_idx on public.movie_library(user_id, status);
 create index if not exists community_reviews_movie_idx on public.community_reviews(tmdb_id, movie_title, release_year);
 create index if not exists reminders_due_idx on public.upcoming_movie_reminders(reminder_status, reminder_sent, release_date);
+create index if not exists upcoming_preferences_user_preference_idx on public.upcoming_movie_preferences(user_id, preference);

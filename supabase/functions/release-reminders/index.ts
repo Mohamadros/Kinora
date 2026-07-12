@@ -5,46 +5,115 @@ type Reminder = {
   user_id: string;
   movie_title: string;
   release_date: string | null;
+  email: string | null;
+};
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+
+const sendReminderEmail = async (reminder: Reminder, email: string) => {
+  const resendKey = Deno.env.get("RESEND_API_KEY") ?? "";
+  const from = Deno.env.get("KINORA_REMINDER_FROM") ?? "Kinora <reminders@kinora.app>";
+  if (!resendKey) {
+    return { ok: false, configured: false, error: "RESEND_API_KEY is not configured." };
+  }
+
+  const releaseDate = reminder.release_date ?? "Date not available";
+  const subject = `Kinora release reminder: ${reminder.movie_title}`;
+  const text = `${reminder.movie_title} is now scheduled for release.
+
+You saved this movie in your Kinora Upcoming Watchlist.
+
+Release date:
+${releaseDate}
+
+It may now be available in cinemas. Check your local cinema listings for current availability.`;
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${resendKey}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      from,
+      to: email,
+      subject,
+      text,
+    }),
+  });
+
+  if (!response.ok) {
+    return { ok: false, configured: true, error: await response.text() };
+  }
+
+  return { ok: true, configured: true, error: null };
 };
 
 Deno.serve(async () => {
   const supabaseUrl = Deno.env.get("SUPABASE_URL") ?? "";
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-  const supabase = createClient(supabaseUrl, serviceRoleKey);
+  if (!supabaseUrl || !serviceRoleKey) {
+    return json({ error: "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required." }, 500);
+  }
 
-  const today = new Date();
-  const soon = new Date(today);
-  soon.setDate(today.getDate() + 3);
-  const from = today.toISOString().slice(0, 10);
-  const to = soon.toISOString().slice(0, 10);
+  const supabase = createClient(supabaseUrl, serviceRoleKey);
+  const today = new Date().toISOString().slice(0, 10);
 
   const { data, error } = await supabase
     .from("upcoming_movie_reminders")
-    .select("id,user_id,movie_title,release_date")
+    .select("id,user_id,movie_title,release_date,email")
     .eq("reminder_status", "active")
     .eq("reminder_sent", false)
-    .gte("release_date", from)
-    .lte("release_date", to);
+    .not("release_date", "is", null)
+    .lte("release_date", today);
 
-  if (error) return new Response(JSON.stringify({ error }), { status: 500 });
+  if (error) return json({ error }, 500);
 
   const reminders = (data ?? []) as Reminder[];
+  const results = [];
 
-  // Email provider integration goes here. Supabase Auth does not expose a simple
-  // broadcast email API from Edge Functions; connect Resend, SendGrid, or SMTP.
-  // This function marks due reminders as sent once the email call succeeds.
   for (const reminder of reminders) {
-    await supabase
+    let email = reminder.email ?? "";
+    if (!email) {
+      const { data: userData, error: userError } = await supabase.auth.admin.getUserById(reminder.user_id);
+      if (userError) {
+        results.push({ id: reminder.id, sent: false, error: userError.message });
+        continue;
+      }
+      email = userData.user?.email ?? "";
+    }
+
+    if (!email) {
+      results.push({ id: reminder.id, sent: false, error: "No user email found." });
+      continue;
+    }
+
+    const sendResult = await sendReminderEmail(reminder, email);
+    if (!sendResult.ok) {
+      results.push({ id: reminder.id, sent: false, configured: sendResult.configured, error: sendResult.error });
+      continue;
+    }
+
+    const { error: updateError } = await supabase
       .from("upcoming_movie_reminders")
       .update({
         reminder_sent: true,
         reminder_status: "sent",
         reminder_sent_at: new Date().toISOString(),
       })
-      .eq("id", reminder.id);
+      .eq("id", reminder.id)
+      .eq("reminder_sent", false);
+
+    results.push({ id: reminder.id, sent: !updateError, error: updateError?.message ?? null });
   }
 
-  return new Response(JSON.stringify({ checked: reminders.length }), {
-    headers: { "content-type": "application/json" },
+  return json({
+    checked: reminders.length,
+    sent: results.filter((result) => result.sent).length,
+    results,
   });
 });
