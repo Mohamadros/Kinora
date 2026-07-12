@@ -48,6 +48,7 @@ create table if not exists public.community_reviews (
   rating int not null check (rating between 1 and 5),
   review_title text not null,
   review_text text not null,
+  watch_platform text,
   cinema_name text,
   feeling_before text,
   feeling_after text,
@@ -55,6 +56,9 @@ create table if not exists public.community_reviews (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.community_reviews
+add column if not exists watch_platform text;
 
 create table if not exists public.upcoming_movie_reminders (
   id uuid primary key default gen_random_uuid(),

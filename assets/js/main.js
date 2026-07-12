@@ -108,7 +108,15 @@ const setAuthLoading=loading=>{
 };
 function fillCommunityReviewName(){
   const input=document.querySelector('[data-community-form] input[name="name"]');
-  if(input&&currentUserId())input.value=authDisplayName();
+  const field=input?.closest('[data-community-author-field]');
+  if(input&&currentUserId()){
+    input.value=authDisplayName();
+    input.required=false;
+    if(field)field.hidden=true;
+  }else if(input){
+    input.required=true;
+    if(field)field.hidden=false;
+  }
 }
 const openAuthDialog=(message='',mode='login')=>{
   setAuthMode(mode);
@@ -2722,6 +2730,11 @@ const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false,onOptimi
     console.warn('Kinora library mutation failed',error);
     lastSupabaseLibraryResult={ok:false,action:remove?'delete':'upsert',error:String(error.message||error)};
   }
+  if(currentUserId()&&remove&&!savedOnline&&lastSupabaseLibraryResult?.error==='No matching Supabase row was deleted.'){
+    savedOnline=true;
+    lastSupabaseLibraryResult={...lastSupabaseLibraryResult,ok:true,error:null,idempotentDelete:true};
+    assistantDebug('library delete treated as already removed',{title:normalized.title,status});
+  }
   if(currentUserId()&&!savedOnline){
     setAssistantMemory(previousMemory);
     await loadSupabaseLibrary();
@@ -2730,6 +2743,7 @@ const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false,onOptimi
   preserveAssistantWall();
   if(!assistantWallHasMovieCards())await recoverAssistantWallFromCandidates('library mutation');
   assistantDebug('library action after',{actionType,movieId:movie.tmdbId||movie.id||normalized.id||null,title:normalized.title,status,rating,remove,savedOnline,supabaseResult:lastSupabaseLibraryResult,beforeCounts,afterCounts:assistantStateCounts()});
+  return !currentUserId()||savedOnline;
 };
 const openMovieDetails=async movie=>{
   const normalized=normalizeMovie(movie);
@@ -2765,7 +2779,7 @@ const openMovieDetails=async movie=>{
     ratings.append(link);
   });
   const actions=document.createElement('div'); actions.className='assistant-actions detail-actions';
-  const save=document.createElement('button'); save.type='button'; save.textContent='Save';
+  const save=document.createElement('button'); save.type='button'; save.textContent='SAVE';
   const watched=document.createElement('button'); watched.type='button'; watched.textContent='WATCH';
   const trailer=document.createElement('button'); trailer.type='button'; trailer.textContent='Trailer';
   const backToMatch=document.createElement('button'); backToMatch.type='button'; backToMatch.textContent='Back to Movie Match';
@@ -2809,8 +2823,9 @@ const openMovieDetails=async movie=>{
     const userRating=Number(memory.ratings?.[normalized.title]||0);
     save.classList.toggle('is-active',status==='saved');
     watched.classList.toggle('is-active',status==='watched'||status==='rated');
-    save.disabled=status==='watched'||status==='rated';
-    save.textContent=status==='saved'?'Unsave':status==='watched'||status==='rated'?'In Library':'Save';
+    save.disabled=saveBusy;
+    watched.disabled=watchedBusy;
+    save.textContent=status==='saved'?'SAVED':'SAVE';
     watched.textContent=status==='watched'||status==='rated'?'WATCHED':'WATCH';
     ratingPanel.hidden=!(status==='watched'||status==='rated');
     ratingScale.querySelectorAll('button').forEach((button,index)=>button.classList.toggle('is-active',index+1===userRating));
@@ -2830,12 +2845,14 @@ const openMovieDetails=async movie=>{
     const isActive=currentStatus==='saved';
     saveBusy=true;
     save.setAttribute('aria-busy','true');
-    await mutateAssistantLibrary({movie,status:'saved',remove:isActive,onOptimistic:sync});
+    sync();
+    const ok=await mutateAssistantLibrary({movie,status:'saved',remove:isActive,onOptimistic:sync});
     saveBusy=false;
     save.removeAttribute('aria-busy');
     sync();
-    libraryStatus.textContent=isActive?'Unsaved from My Library.':'Saved to My Library.';
+    libraryStatus.textContent=ok?(isActive?'Removed from saved movies.':'Saved to My Library.'):'Could not update My Library. Please try again.';
     preserveAssistantWall();
+    if(ok&&!isActive)closeMovieDetailToMatch();
   });
   watched.addEventListener('click',async()=>{
     if(!requireKinoraAuth())return;
@@ -2845,13 +2862,21 @@ const openMovieDetails=async movie=>{
     const isWatched=currentStatus==='watched'||currentStatus==='rated';
     watchedBusy=true;
     watched.setAttribute('aria-busy','true');
-    await mutateAssistantLibrary({movie,status:'watched',remove:isWatched,onOptimistic:sync});
     sync();
+    const ok=await mutateAssistantLibrary({movie,status:'watched',remove:isWatched,onOptimistic:sync});
     watchedBusy=false;
     watched.removeAttribute('aria-busy');
+    sync();
+    if(!ok){
+      libraryStatus.textContent='Could not update watched status. Please try again.';
+      return;
+    }
     if(!isWatched){
       ratingPanel.hidden=false;
       ratingPanel.querySelector('button')?.focus({preventScroll:true});
+    }else{
+      ratingPanel.hidden=true;
+      libraryStatus.textContent='Removed from watched movies.';
     }
   });
   trailer.addEventListener('click',()=>openTrailer(normalized));
@@ -3167,6 +3192,9 @@ const communityTmdbIdInput=communityForm?.querySelector('[data-community-tmdb-id
 const communityReleaseYearInput=communityForm?.querySelector('[data-community-release-year]');
 const communityPosterPathInput=communityForm?.querySelector('[data-community-poster-path]');
 const communityPosterUrlInput=communityForm?.querySelector('[data-community-poster-url]');
+const communityWatchPlatformSelect=communityForm?.querySelector('[data-watch-platform]');
+const communityCinemaNameField=communityForm?.querySelector('[data-cinema-name-field]');
+const communityStarRating=communityForm?.querySelector('[data-community-star-rating]');
 const memoryWall=document.querySelector('.memory-wall');
 const communityArchive=document.querySelector('.community-archive');
 const communityDialog=document.querySelector('[data-community-dialog]');
@@ -3208,7 +3236,8 @@ const communityMemoryFromSupabase=row=>({
   'review-title':row.review_title,
   experience:row.review_text,
   preview:String(row.review_text||'').slice(0,120),
-  cinema:row.cinema_name||'Cinema memory',
+  cinema:row.cinema_name||'',
+  watchPlatform:row.watch_platform||row.cinema_name||'Cinema',
   'feeling-before':row.feeling_before||'-',
   'feeling-after':row.feeling_after||'-',
   recommend:row.recommend||'Maybe',
@@ -3238,6 +3267,7 @@ const saveSupabaseCommunityReview=async memory=>{
     rating:Number(String(memory.rating||'').match(/\d+/)?.[0]||memory.rating||0),
     review_title:memory['review-title']||'Community review',
     review_text:memory.experience||'',
+    watch_platform:memory.watch_platform||memory.watchPlatform||null,
     cinema_name:memory.cinema||null,
     feeling_before:memory['feeling-before']||null,
     feeling_after:memory['feeling-after']||null,
@@ -3405,7 +3435,8 @@ const openCommunityReview=card=>{
         <dl>
           <div><dt>Author</dt><dd>${escapeHTML(data.author||'Anonymous')}</dd></div>
           <div><dt>Date</dt><dd>${escapeHTML(formatCommunityDate(data.date))}</dd></div>
-          <div><dt>Cinema</dt><dd>${escapeHTML(data.cinema||'Cinema memory')}</dd></div>
+          <div><dt>Watched on</dt><dd>${escapeHTML(data.watchPlatform||data.cinema||'Cinema')}</dd></div>
+          ${data.cinema?`<div><dt>Cinema</dt><dd>${escapeHTML(data.cinema)}</dd></div>`:''}
           <div><dt>Recommend</dt><dd>${escapeHTML(data.recommend||'Maybe')}</dd></div>
           <div><dt>Before</dt><dd>${escapeHTML(data.before||'-')}</dd></div>
           <div><dt>After</dt><dd>${escapeHTML(data.after||'-')}</dd></div>
@@ -3422,7 +3453,7 @@ const addMemoryCard=memory=>{
   const isLocal=!!memory.isLocal;
   const reviewId=communityReviewId(memory);
   const card=document.createElement('article');card.className='memory-case is-visible';card.tabIndex=0;card.setAttribute('aria-label',`Open ${memory.name||'Anonymous'}'s review of ${memory.movie}`);
-  card.dataset.reviewId=reviewId;card.dataset.localReview=isLocal?'true':'false';card.dataset.supabaseReview=memory.isSupabase?'true':'false';card.dataset.movie=memory.movie;card.dataset.tmdbId=memory.tmdbId||'';card.dataset.releaseYear=memory.releaseYear||'';card.dataset.posterPath=memory.posterPath||'';card.dataset.reviewTitle=memory['review-title']||'Community review';card.dataset.rating=String(score);card.dataset.author=memory.name||'Anonymous';card.dataset.date=recordedAt;card.dataset.cinema=memory.cinema||'Cinema memory';card.dataset.poster=poster;card.dataset.experience=memory.experience||'A cinema memory worth keeping.';card.dataset.preview=memory.preview||memory.experience||'A cinema memory worth keeping.';card.dataset.before=memory['feeling-before']||'-';card.dataset.after=memory['feeling-after']||'-';card.dataset.recommend=memory.recommend||'Maybe';
+  card.dataset.reviewId=reviewId;card.dataset.localReview=isLocal?'true':'false';card.dataset.supabaseReview=memory.isSupabase?'true':'false';card.dataset.movie=memory.movie;card.dataset.tmdbId=memory.tmdbId||'';card.dataset.releaseYear=memory.releaseYear||'';card.dataset.posterPath=memory.posterPath||'';card.dataset.reviewTitle=memory['review-title']||'Community review';card.dataset.rating=String(score);card.dataset.author=memory.name||'Anonymous';card.dataset.date=recordedAt;card.dataset.watchPlatform=memory.watchPlatform||memory.watch_platform||memory.cinema||'Cinema';card.dataset.cinema=memory.cinema||'';card.dataset.poster=poster;card.dataset.experience=memory.experience||'A cinema memory worth keeping.';card.dataset.preview=memory.preview||memory.experience||'A cinema memory worth keeping.';card.dataset.before=memory['feeling-before']||'-';card.dataset.after=memory['feeling-after']||'-';card.dataset.recommend=memory.recommend||'Maybe';
   const image=document.createElement('img');image.src=poster;image.alt=`Poster thumbnail for ${memory.movie}`;image.loading='eager';image.decoding='async';image.onerror=()=>{image.onerror=null;image.src=communityPosterFallback(memory.movie);card.dataset.poster=image.src;};
   const spine=document.createElement('span');spine.className='case-spine';
   const rating=document.createElement('span');rating.className='memory-rating';rating.textContent='★'.repeat(score)+'☆'.repeat(5-score);
@@ -3598,6 +3629,29 @@ memoryWall?.addEventListener('keydown',event=>{
 });
 communityDialog?.addEventListener('click',event=>{if(event.target===communityDialog)communityDialog.close();});
 communityReviewSearch?.addEventListener('input',applyCommunityReviewSearch);
+const setCommunityStarRating=value=>{
+  const score=Math.max(0,Math.min(5,Number(value)||0));
+  if(!communityStarRating)return;
+  const input=communityStarRating.querySelector('input[name="rating"]');
+  if(input)input.value=score?String(score):'';
+  communityStarRating.querySelectorAll('[data-rating-value]').forEach(button=>{
+    const active=Number(button.dataset.ratingValue)<=score;
+    button.classList.toggle('is-active',active);
+    button.textContent=active?'★':'☆';
+    button.setAttribute('aria-pressed',String(Number(button.dataset.ratingValue)===score));
+  });
+};
+communityStarRating?.addEventListener('click',event=>{
+  const button=event.target.closest('[data-rating-value]');
+  if(!button)return;
+  setCommunityStarRating(button.dataset.ratingValue);
+});
+const syncCommunityWatchPlatform=()=>{
+  const isCinema=communityWatchPlatformSelect?.value==='Cinema';
+  if(communityCinemaNameField)communityCinemaNameField.hidden=!isCinema;
+};
+communityWatchPlatformSelect?.addEventListener('change',syncCommunityWatchPlatform);
+syncCommunityWatchPlatform();
 communityMovieInput?.addEventListener('input',()=>{
   const query=communityMovieInput.value.trim();
   if(selectedCommunityMovie&&query!==selectedCommunityMovie.displayTitle&&query!==selectedCommunityMovie.title)clearCommunityMovieSelection();
@@ -3660,6 +3714,10 @@ communityForm?.addEventListener('submit',async event=>{
   if(!requireKinoraAuth('Log in to save this to your Kinora library.')){message.textContent='Log in to save this to your Kinora library.';return;}
   const formData=new FormData(communityForm);
   const memory=Object.fromEntries(formData.entries());
+  if(!Number(memory.rating)){
+    message.textContent='Please choose a 1–5 star rating.';
+    return;
+  }
   memory.name=authDisplayName();
   formData.set('name',memory.name);
   if(selectedCommunityMovie&&(communityMovieInput.value.trim()===selectedCommunityMovie.displayTitle||communityMovieInput.value.trim()===selectedCommunityMovie.title)){
@@ -3703,9 +3761,11 @@ communityForm?.addEventListener('submit',async event=>{
     formData.set('poster',memory.posterUrl);
   }
   if(!memory.posterUrl){memory.posterUrl=communityPosterFallback(memory.movie);memory.poster=memory.posterUrl;formData.set('poster',memory.posterUrl);}
+  memory.watchPlatform=memory.watch_platform||memory.watchPlatform||'';
+  if(memory.watchPlatform!=='Cinema')memory.cinema='';
   const supabaseMemory=await saveSupabaseCommunityReview(memory);
   if(!supabaseMemory){message.textContent='The review could not be saved online. Please try again.';return;}
-  addMemoryCard({...supabaseMemory,isLocal:true}); communityForm.reset(); clearCommunityMovieSelection(); hideCommunityMovieSuggestions(); message.textContent='Your review has been added. You can delete it for 1 minute.';
+  addMemoryCard({...supabaseMemory,isLocal:true}); communityForm.reset(); setCommunityStarRating(0); syncCommunityWatchPlatform(); fillCommunityReviewName(); clearCommunityMovieSelection(); hideCommunityMovieSuggestions(); message.textContent='Your review has been added. You can delete it for 1 minute.';
 });
 const refreshKinoraPersonalData=async()=>{
   if(!currentUserId())return;
