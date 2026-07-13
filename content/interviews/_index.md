@@ -4,15 +4,18 @@ kicker = "Marburg University voices"
 intro = "Four students from Marburg University reflect on how digital platforms shape their cinema habits, from quick streaming choices to shared movie nights."
 background = "images/auditorium-seats.png"
 weight = 40
-[[stats]]
-value = 4
-label = "student interviews"
-[[stats]]
-value = 3
-label = "prefer shared viewing"
-[[stats]]
-value = 2
-label = "mix cinema and streaming"
+[[insights]]
+label = "Shared experience"
+title = "Cinema is a social activity."
+text = "Going to the cinema creates a deliberate occasion: people meet, watch together, and continue the experience through conversation."
+[[insights]]
+label = "Viewing context"
+title = "Where a film is watched changes how it is felt."
+text = "Convenience matters, but attention, company, mood, and the setting around a screening can matter as much as the title itself."
+[[insights]]
+label = "Human discovery"
+title = "Personal recommendations carry more meaning than popularity."
+text = "A trusted suggestion becomes useful when it responds to a person's mood, available time, and the people sharing the evening."
 [[quotes]]
 quote = "At Marburg University, cinema is not only about watching a film. It is a reason to meet, talk, and compare what everyone noticed."
 person = "Mohamad · Marburg University"
@@ -31,4 +34,4 @@ person = "Aida · Marburg University"
 question = "Why do community voices matter?"
 +++
 
-These interview notes summarize student perspectives from Marburg University and frame Kinora as a digital cinema space built around discovery, shared attention, and community discussion.
+These findings come from four qualitative student interviews at Marburg University. They describe recurring themes in those conversations, not statistical conclusions or claims about a wider population.

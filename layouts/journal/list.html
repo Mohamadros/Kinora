@@ -87,13 +87,27 @@
 <section id="interviews" class="section interview-section" style="--section-image:url('{{ $interviews.Params.background | relURL }}')">
   <div class="section-shell">
     {{ partial "section-heading.html" $interviews }}
-    <div class="stats-grid">
-      {{ range $interviews.Params.stats }}<article class="stat-card reveal"><strong>{{ .value }}<span>%</span></strong><p>{{ .label }}</p><div class="stat-track"><i style="--value:{{ .value }}%"></i></div></article>{{ end }}
-    </div>
-    <div class="quote-grid">
-      {{ range $interviews.Params.quotes }}<figure class="quote-card reveal"><span class="quote-mark" aria-hidden="true">“</span><blockquote>{{ .quote }}</blockquote><figcaption><small>{{ .question }}</small><span>{{ .person }}</span></figcaption></figure>{{ end }}
-    </div>
-    <aside class="research-note reveal">{{ $interviews.Content }}</aside>
+    <section class="research-summary" aria-labelledby="research-insights-title">
+      <header class="research-subheading reveal">
+        <p class="kicker">Research summary · Four conversations</p>
+        <h3 id="research-insights-title">What We Learned</h3>
+        <p>Three recurring ideas shaped how Kinora approaches discovery, viewing, and conversation.</p>
+      </header>
+      <div class="insight-grid">
+        {{ range $interviews.Params.insights }}<article class="insight-card reveal"><p class="insight-label">{{ .label }}</p><h4>{{ .title }}</h4><p>{{ .text }}</p></article>{{ end }}
+      </div>
+      <aside class="research-note reveal">{{ $interviews.Content }}</aside>
+    </section>
+    <section class="interview-voices" aria-labelledby="interview-voices-title">
+      <header class="research-subheading reveal">
+        <p class="kicker">Interview voices</p>
+        <h3 id="interview-voices-title">In Their Words</h3>
+        <p>Selected reflections from the conversations behind these research insights.</p>
+      </header>
+      <div class="quote-grid">
+        {{ range $interviews.Params.quotes }}<figure class="quote-card reveal"><span class="quote-mark" aria-hidden="true">“</span><blockquote>{{ .quote }}</blockquote><figcaption><small>{{ .question }}</small><span>{{ .person }}</span></figcaption></figure>{{ end }}
+      </div>
+    </section>
   </div>
 </section>
 
