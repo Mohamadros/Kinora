@@ -81,6 +81,13 @@ create table if not exists public.upcoming_movie_reminders (
 alter table public.upcoming_movie_reminders
 add column if not exists email text;
 
+alter table public.upcoming_movie_reminders
+drop constraint if exists upcoming_movie_reminders_reminder_status_check;
+
+alter table public.upcoming_movie_reminders
+add constraint upcoming_movie_reminders_reminder_status_check
+check (reminder_status in ('active','processing','cancelled','sent'));
+
 create table if not exists public.upcoming_movie_preferences (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,

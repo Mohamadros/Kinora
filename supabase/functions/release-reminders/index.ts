@@ -77,10 +77,25 @@ Deno.serve(async () => {
   const results = [];
 
   for (const reminder of reminders) {
+    const { data: claimed, error: claimError } = await supabase
+      .from("upcoming_movie_reminders")
+      .update({ reminder_status: "processing" })
+      .eq("id", reminder.id)
+      .eq("reminder_status", "active")
+      .eq("reminder_sent", false)
+      .select("id")
+      .maybeSingle();
+
+    if (claimError || !claimed) {
+      results.push({ id: reminder.id, sent: false, skipped: true, error: claimError?.message ?? "Already claimed." });
+      continue;
+    }
+
     let email = reminder.email ?? "";
     if (!email) {
       const { data: userData, error: userError } = await supabase.auth.admin.getUserById(reminder.user_id);
       if (userError) {
+        await supabase.from("upcoming_movie_reminders").update({ reminder_status: "active" }).eq("id", reminder.id).eq("reminder_status", "processing");
         results.push({ id: reminder.id, sent: false, error: userError.message });
         continue;
       }
@@ -88,12 +103,14 @@ Deno.serve(async () => {
     }
 
     if (!email) {
+      await supabase.from("upcoming_movie_reminders").update({ reminder_status: "active" }).eq("id", reminder.id).eq("reminder_status", "processing");
       results.push({ id: reminder.id, sent: false, error: "No user email found." });
       continue;
     }
 
     const sendResult = await sendReminderEmail(reminder, email);
     if (!sendResult.ok) {
+      await supabase.from("upcoming_movie_reminders").update({ reminder_status: "active" }).eq("id", reminder.id).eq("reminder_status", "processing");
       results.push({ id: reminder.id, sent: false, configured: sendResult.configured, error: sendResult.error });
       continue;
     }
@@ -106,6 +123,7 @@ Deno.serve(async () => {
         reminder_sent_at: new Date().toISOString(),
       })
       .eq("id", reminder.id)
+      .eq("reminder_status", "processing")
       .eq("reminder_sent", false);
 
     results.push({ id: reminder.id, sent: !updateError, error: updateError?.message ?? null });

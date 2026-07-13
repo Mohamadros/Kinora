@@ -82,5 +82,23 @@ html{scroll-behavior:auto!important}.hero{place-items:start!important;background
 .section-heading h1,.section-heading h2{font-size:clamp(3.25rem,5.75vw,6.15rem)!important;line-height:.98!important;letter-spacing:-.032em!important;text-wrap:balance;margin-bottom:clamp(1.45rem,2.4vw,2.15rem)!important}
 .section-intro{margin-top:0!important;font-size:clamp(1.08rem,1.35vw,1.32rem)!important}
 .section-heading::after{margin-top:clamp(1.6rem,2.5vw,2.35rem)!important}
+
+/* Center dropdown options while preserving full-width, accessible hit targets. */
+.nav-dropdown-menu a,.account-menu-panel a,.account-menu-panel button{text-align:center!important}
+.nav-dropdown-menu a{width:100%;padding:10px 16px!important}
+.account-menu-panel a,.account-menu-panel button{padding:11px 16px!important}
+.account-menu-panel a::after,.account-menu-panel button::after{left:50%!important;right:50%!important}
+.account-menu-panel a:hover::after,.account-menu-panel button:hover::after,.account-menu-panel a:focus-visible::after,.account-menu-panel button:focus-visible::after,.account-menu-panel a.is-active::after,.account-menu-panel button.is-active::after{left:18%!important;right:18%!important}
+
+/* Category filtering must override the cards' explicit grid/block display rules. */
+[data-journal-entry][hidden]{display:none!important}
+
+@media(max-width:1000px){
+  .nav-dropdown-menu{left:auto!important;right:auto!important;width:100%!important;padding-left:0!important;text-align:center;transform:none!important}
+  .nav-dropdown-toggle[aria-expanded=false]+.nav-dropdown-menu{display:none!important}
+  .nav-dropdown-toggle[aria-expanded=true]+.nav-dropdown-menu{display:grid!important;transform:none!important}
+  .nav-dropdown-menu a{padding:11px 14px!important;text-align:center!important}
+  .account-menu-panel{max-width:calc(100vw - 24px)}
+}
 .coming-section .section-heading h2{font-size:clamp(3.35rem,5.4vw,6rem)!important}
 @media(max-width:720px){.section-heading h1,.section-heading h2,.coming-section .section-heading h2{font-size:clamp(3rem,13vw,5.2rem)!important;line-height:1!important}.section-intro{margin-top:1.15rem!important}}

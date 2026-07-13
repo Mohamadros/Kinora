@@ -70,6 +70,7 @@ let kinoraProfile=null;
 let authUser=null;
 let kinoraLibraryReady=false;
 let authLoading=false;
+let authStateRevision=0;
 const isSupabaseReady=()=>Boolean(supabaseClient);
 const currentUserId=()=>kinoraSession?.user?.id||'';
 const displayAuthMessage=message=>{if(authMessage)authMessage.textContent=message;};
@@ -182,8 +183,11 @@ const setupAuth=async ()=>{
   if(kinoraSession)await fetchKinoraProfile();
   updateAuthUI();
   supabaseClient.auth.onAuthStateChange(async (_event,session)=>{
+    const previousUserId=currentUserId();
     kinoraSession=session;
+    authStateRevision++;
     kinoraLibraryReady=false;
+    resetPersonalDataForAuthTransition(previousUserId,session?.user?.id||'');
     if(session)await fetchKinoraProfile();
     updateAuthUI();
     document.dispatchEvent(new CustomEvent('kinora-auth-change'));
@@ -214,8 +218,10 @@ authForgot?.addEventListener('click',()=>setAuthMode('reset'));
 authLogoutButton?.addEventListener('click',async()=>{
   if(!supabaseClient)return;
   closeAccountMenu();
+  const previousUserId=currentUserId();
   await supabaseClient.auth.signOut();
   kinoraSession=null;kinoraProfile=null;kinoraLibraryReady=false;updateAuthUI();
+  resetPersonalDataForAuthTransition(previousUserId,'');
 });
 authForm?.addEventListener('submit',async event=>{
   event.preventDefault();
@@ -284,12 +290,12 @@ toggle?.addEventListener('click', () => {
   toggle.setAttribute('aria-label', open ? 'Open navigation' : 'Close navigation');
   document.body.classList.toggle('nav-open', !open);
 });
-nav?.querySelectorAll('a').forEach(link => link.addEventListener('click', closeNav));
+nav?.querySelectorAll('a').forEach(link => link.addEventListener('click',()=>{if(link!==navDropdownToggle)closeNav();}));
 const closeNavDropdown=()=>navDropdownToggle?.setAttribute('aria-expanded','false');
 const openNavDropdown=()=>navDropdownToggle?.setAttribute('aria-expanded','true');
 const supportsHoverDropdown=()=>innerWidth>1000&&matchMedia('(hover: hover) and (pointer: fine)').matches;
 navDropdownToggle?.addEventListener('click',event=>{
-  if(navDropdownToggle.tagName.toLowerCase()==='a')return;
+  event.preventDefault();
   event.stopPropagation();
   const open=navDropdownToggle.getAttribute('aria-expanded')==='true';
   navDropdownToggle.setAttribute('aria-expanded',String(!open));
@@ -299,7 +305,7 @@ navDropdown?.addEventListener('pointerenter',()=>{if(supportsHoverDropdown())ope
 navDropdown?.addEventListener('focusin',()=>{if(supportsHoverDropdown())openNavDropdown();});
 navDropdown?.addEventListener('mouseleave',()=>{if(supportsHoverDropdown())closeNavDropdown();});
 navDropdown?.addEventListener('pointerleave',()=>{if(supportsHoverDropdown())closeNavDropdown();});
-navDropdown?.querySelectorAll('a').forEach(link=>link.addEventListener('click',()=>{closeNavDropdown();closeNav();}));
+navDropdown?.querySelectorAll('a').forEach(link=>link.addEventListener('click',()=>{if(link===navDropdownToggle)return;closeNavDropdown();closeNav();}));
 document.addEventListener('click',event=>{if(navDropdown&&!navDropdown.contains(event.target))closeNavDropdown();});
 window.addEventListener('scroll', () => header?.classList.toggle('is-scrolled', scrollY > 40), { passive: true });
 const headerScrollOffset=()=>Math.ceil((header?.getBoundingClientRect().height||78)+8);
@@ -319,6 +325,7 @@ const samePageHashFromLink=link=>{
   }catch{return '';}
 };
 document.querySelectorAll('a[href*="#"]').forEach(link=>link.addEventListener('click',event=>{
+  if(link===navDropdownToggle)return;
   const hash=samePageHashFromLink(link);
   if(!hash)return;
   event.preventDefault();
@@ -621,8 +628,9 @@ const dateFilter = document.querySelector('[data-date-filter]');
 const anticipatedFilter = document.querySelector('[data-anticipated-filter]');
 const loadMoreButton = document.querySelector('[data-load-more]');
 const apiNotice = document.querySelector('[data-api-notice]');
-const radarWatchlistKey='futureMovieRadarWatchlist';
-const radarHiddenKey='futureMovieRadarHidden';
+const radarWatchlistKey='kinoraGuestUpcomingWatchlistV1';
+const radarHiddenKey='kinoraGuestUpcomingHiddenV1';
+const authenticatedRadarStores={watchlist:[],hidden:[]};
 const reminderEmailBackendActive=false;
 const reminderEmailProviderActive=false;
 console.info('Email scheduler configured:', reminderEmailBackendActive);
@@ -675,8 +683,16 @@ const radarLoadMoreCount = 8;
 const radarCreditsCache=new Map();
 
 const fillGenres = genres => { genres.forEach(genre => { const option=document.createElement('option'); option.value=genre.id; option.textContent=genre.name; genreFilter?.append(option); }); };
-const getRadarStore=key=>{try{return JSON.parse(localStorage.getItem(key)||'[]');}catch{return [];}};
-const setRadarStore=(key,value)=>{try{localStorage.setItem(key,JSON.stringify(value));}catch{}};
+const authenticatedRadarStoreName=key=>key===radarHiddenKey?'hidden':'watchlist';
+const getRadarStore=key=>{
+  if(currentUserId())return [...authenticatedRadarStores[authenticatedRadarStoreName(key)]];
+  try{return JSON.parse(localStorage.getItem(key)||'[]');}catch{return [];}
+};
+const setRadarStore=(key,value)=>{
+  const records=Array.isArray(value)?value:[];
+  if(currentUserId())authenticatedRadarStores[authenticatedRadarStoreName(key)]=[...records];
+  else try{localStorage.setItem(key,JSON.stringify(records));}catch{}
+};
 const upsertReminderPayload=async payload=>{
   const conflict=payload.tmdb_id?'user_id,tmdb_id':'user_id,movie_title,release_date';
   let response=await supabaseClient.from('upcoming_movie_reminders').upsert(payload,{onConflict:conflict});
@@ -693,8 +709,10 @@ const saveSupabaseReminder=async movie=>{
     return false;
   }
   const normalized=normalizeRadarMovie(movie);
+  const requestedUserId=currentUserId();
+  const requestedRevision=authStateRevision;
   const payload={
-    user_id:currentUserId(),
+    user_id:requestedUserId,
     tmdb_id:normalized.id||normalized.tmdbId||null,
     movie_title:normalized.title,
     email:kinoraSession?.user?.email||authUser?.email||null,
@@ -707,6 +725,7 @@ const saveSupabaseReminder=async movie=>{
   console.info('Email scheduler configured:', reminderEmailBackendActive);
   console.info('Email provider configured:', reminderEmailProviderActive);
   const {error}=await upsertReminderPayload(payload);
+  if(requestedRevision!==authStateRevision||requestedUserId!==currentUserId())return false;
   if(error){
     console.warn('Release reminder save failed',error);
     if(comingStatus)comingStatus.textContent='Reminder could not be saved online. Please try again.';
@@ -721,10 +740,13 @@ const saveSupabaseReminder=async movie=>{
 };
 const cancelSupabaseReminder=async record=>{
   if(!supabaseClient||!currentUserId())return false;
-  let query=supabaseClient.from('upcoming_movie_reminders').update({reminder_status:'cancelled'}).eq('user_id',currentUserId());
+  const requestedUserId=currentUserId();
+  const requestedRevision=authStateRevision;
+  let query=supabaseClient.from('upcoming_movie_reminders').update({reminder_status:'cancelled'}).eq('user_id',requestedUserId);
   if(record.tmdbId)query=query.eq('tmdb_id',record.tmdbId);
   else query=query.eq('movie_title',record.title);
   const {error}=await query;
+  if(requestedRevision!==authStateRevision||requestedUserId!==currentUserId())return false;
   if(error){
     console.warn('Release reminder cancel failed',error);
     if(comingStatus)comingStatus.textContent='Reminder could not be cancelled online. Please try again.';
@@ -735,9 +757,11 @@ const cancelSupabaseReminder=async record=>{
 };
 const saveSupabaseUpcomingPreference=async (movie,preference='not_interested')=>{
   if(!supabaseClient||!currentUserId())return false;
+  const requestedUserId=currentUserId();
+  const requestedRevision=authStateRevision;
   const normalized=normalizeRadarMovie(movie);
   const payload={
-    user_id:currentUserId(),
+    user_id:requestedUserId,
     tmdb_id:normalized.id||normalized.tmdbId||null,
     movie_title:normalized.title,
     release_date:normalized.releaseDate||normalized.release_date||null,
@@ -745,6 +769,7 @@ const saveSupabaseUpcomingPreference=async (movie,preference='not_interested')=>
     preference
   };
   const {error}=await supabaseClient.from('upcoming_movie_preferences').upsert(payload,{onConflict:payload.tmdb_id?'user_id,tmdb_id,preference':'user_id,movie_title,release_date,preference'});
+  if(requestedRevision!==authStateRevision||requestedUserId!==currentUserId())return false;
   if(error){
     console.warn('Upcoming preference save failed',error);
     return false;
@@ -753,10 +778,13 @@ const saveSupabaseUpcomingPreference=async (movie,preference='not_interested')=>
 };
 const deleteSupabaseUpcomingPreference=async record=>{
   if(!supabaseClient||!currentUserId())return false;
-  let query=supabaseClient.from('upcoming_movie_preferences').delete().eq('user_id',currentUserId()).eq('preference','not_interested');
+  const requestedUserId=currentUserId();
+  const requestedRevision=authStateRevision;
+  let query=supabaseClient.from('upcoming_movie_preferences').delete().eq('user_id',requestedUserId).eq('preference','not_interested');
   if(record.tmdbId)query=query.eq('tmdb_id',record.tmdbId);
   else query=query.eq('movie_title',record.title);
   const {error}=await query;
+  if(requestedRevision!==authStateRevision||requestedUserId!==currentUserId())return false;
   if(error){
     console.warn('Upcoming preference delete failed',error);
     return false;
@@ -765,7 +793,10 @@ const deleteSupabaseUpcomingPreference=async record=>{
 };
 const loadSupabaseUpcomingPreferences=async ()=>{
   if(!supabaseClient||!currentUserId())return;
-  const {data,error}=await supabaseClient.from('upcoming_movie_preferences').select('*').eq('user_id',currentUserId()).eq('preference','not_interested');
+  const requestedUserId=currentUserId();
+  const requestedRevision=authStateRevision;
+  const {data,error}=await supabaseClient.from('upcoming_movie_preferences').select('*').eq('user_id',requestedUserId).eq('preference','not_interested');
+  if(requestedRevision!==authStateRevision||requestedUserId!==currentUserId())return;
   if(error){console.warn('Upcoming preferences load failed',error);return;}
   setRadarStore(radarHiddenKey,(data||[]).map(item=>({
     key:String(item.tmdb_id||`${item.movie_title}-${item.release_date||''}`).toLowerCase(),
@@ -780,7 +811,10 @@ const loadSupabaseUpcomingPreferences=async ()=>{
 };
 const loadSupabaseReminders=async ()=>{
   if(!supabaseClient||!currentUserId())return;
-  const {data,error}=await supabaseClient.from('upcoming_movie_reminders').select('*').eq('user_id',currentUserId()).in('reminder_status',['active','sent']);
+  const requestedUserId=currentUserId();
+  const requestedRevision=authStateRevision;
+  const {data,error}=await supabaseClient.from('upcoming_movie_reminders').select('*').eq('user_id',requestedUserId).in('reminder_status',['active','sent']);
+  if(requestedRevision!==authStateRevision||requestedUserId!==currentUserId())return;
   if(error){console.warn('Release reminders load failed',error);return;}
   setRadarStore(radarWatchlistKey,(data||[]).map(item=>({
     key:String(item.tmdb_id||`${item.movie_title}-${item.release_date||''}`).toLowerCase(),
@@ -1026,8 +1060,8 @@ const createRadarCard=rawMovie=>{
       requireKinoraAuth('Log in to save Not Interested preferences.');
       return;
     }
+    if(!await saveSupabaseUpcomingPreference(movie,'not_interested'))return;
     setRadarRecord(radarHiddenKey,radarRecordFromMovie(movie,{status:'not_interested'}));
-    await saveSupabaseUpcomingPreference(movie,'not_interested');
     removeRadarRecord(radarWatchlistKey,radarRecordFromMovie(movie));
     renderRadarLists();
     showComing(filterRadarMovies(comingMovies));
@@ -1169,10 +1203,23 @@ if (comingResults) loadComing();
 
 const journalEntries=[...document.querySelectorAll('[data-journal-entry]')];
 const journalSearch=document.querySelector('[data-journal-search]');
-let journalCategory='all';
-const filterJournal=()=>{ const query=(journalSearch?.value||'').trim().toLowerCase(); let visible=0; journalEntries.forEach(entry=>{ const matchCategory=journalCategory==='all'||entry.dataset.category.split(' ').includes(journalCategory); const matchSearch=!query||entry.dataset.search.includes(query); const show=matchCategory&&matchSearch; entry.hidden=!show; if(show)visible++; }); const empty=document.querySelector('[data-journal-empty]'); if(empty)empty.hidden=visible!==0; };
-document.querySelectorAll('[data-journal-filter]').forEach(button=>button.addEventListener('click',()=>{journalCategory=button.dataset.journalFilter;document.querySelectorAll('[data-journal-filter]').forEach(item=>item.classList.toggle('is-active',item===button));filterJournal();}));
+const journalFilterButtons=[...document.querySelectorAll('[data-journal-filter]')];
+const validJournalCategories=new Set(journalFilterButtons.map(button=>button.dataset.journalFilter));
+const journalCategoryFromUrl=()=>{
+  const value=new URL(location.href).searchParams.get('category')||'all';
+  return validJournalCategories.has(value)?value:'all';
+};
+let journalCategory=journalCategoryFromUrl();
+const filterJournal=()=>{ const query=(journalSearch?.value||'').trim().toLowerCase(); let visible=0; journalEntries.forEach(entry=>{ const matchCategory=journalCategory==='all'||entry.dataset.category.split(' ').includes(journalCategory); const matchSearch=!query||entry.dataset.search.includes(query); const show=matchCategory&&matchSearch; entry.hidden=!show; if(show)visible++; }); journalFilterButtons.forEach(item=>{const active=item.dataset.journalFilter===journalCategory;item.classList.toggle('is-active',active);item.setAttribute('aria-pressed',String(active));}); const empty=document.querySelector('[data-journal-empty]'); if(empty)empty.hidden=visible!==0; };
+const selectJournalCategory=(category,{updateHistory=true}={})=>{
+  journalCategory=validJournalCategories.has(category)?category:'all';
+  filterJournal();
+  if(updateHistory){const url=new URL(location.href);if(journalCategory==='all')url.searchParams.delete('category');else url.searchParams.set('category',journalCategory);history.pushState({journalCategory},'',`${url.pathname}${url.search}${url.hash}`);}
+};
+journalFilterButtons.forEach(button=>button.addEventListener('click',()=>selectJournalCategory(button.dataset.journalFilter)));
 journalSearch?.addEventListener('input',filterJournal);
+window.addEventListener('popstate',()=>selectJournalCategory(journalCategoryFromUrl(),{updateHistory:false}));
+if(journalEntries.length)filterJournal();
 
 const trailerDialog=document.querySelector('[data-trailer-dialog]');
 const openTrailer=async movie=>{
@@ -1205,7 +1252,8 @@ if(assistantPersonalizationNote){
 const assistantMemory=document.querySelector('[data-decision-memory]');
 const assistantLibrarySearch=document.querySelector('[data-library-search]');
 const assistantRefreshButton=document.querySelector('[data-assistant-refresh]');
-const assistantStorageKey='cinemaDecisionMemory';
+const assistantStorageKey='kinoraGuestMovieLibraryV1';
+let authenticatedAssistantMemory;
 const assistantLastVisibleKey='cinemaMovieMatchLastVisibleWallV1';
 const providerMap={netflix:'8',prime:'119',disney:'337'};
 function normalizePlatform(value){
@@ -1453,6 +1501,7 @@ const normalizeAssistantMemory=rawMemory=>{
   return memory;
 };
 const getAssistantMemory=()=>{
+  if(currentUserId())return normalizeAssistantMemory(authenticatedAssistantMemory);
   try{return normalizeAssistantMemory(JSON.parse(localStorage.getItem(assistantStorageKey)||'{}'));}
   catch(error){
     console.warn('Kinora library memory was reset after invalid stored data.',error);
@@ -1487,9 +1536,12 @@ const assistantMemoryFromRows=rows=>{
 };
 const loadSupabaseLibrary=async ()=>{
   if(!supabaseClient||!currentUserId())return;
-  const {data,error}=await supabaseClient.from('movie_library').select('*').eq('user_id',currentUserId()).order('updated_at',{ascending:false});
+  const requestedUserId=currentUserId();
+  const requestedRevision=authStateRevision;
+  const {data,error}=await supabaseClient.from('movie_library').select('*').eq('user_id',requestedUserId).order('updated_at',{ascending:false});
+  if(requestedRevision!==authStateRevision||requestedUserId!==currentUserId())return;
   if(error){console.warn('Kinora library load failed',error);return;}
-  try{localStorage.setItem(assistantStorageKey,JSON.stringify(assistantMemoryFromRows(data)));}catch{}
+  authenticatedAssistantMemory=assistantMemoryFromRows(data);
   kinoraLibraryReady=true;
   syncUserLibraryState();
   updateAssistantMemory();
@@ -1598,10 +1650,7 @@ const clearAssistantLibraryMemory=async ()=>{
       return;
     }
   }
-  try{
-    localStorage.removeItem(assistantStorageKey);
-    localStorage.removeItem(assistantLastVisibleKey);
-  }catch{}
+  if(!currentUserId())try{localStorage.removeItem(assistantStorageKey);}catch{}
   setAssistantMemory(defaultAssistantMemory());
   if(currentUserId())await loadSupabaseLibrary();
   updateAssistantMemory();
@@ -1612,7 +1661,8 @@ const clearAssistantLibraryMemory=async ()=>{
 };
 const setAssistantMemory=memory=>{
   const normalized=normalizeAssistantMemory(memory);
-  try{localStorage.setItem(assistantStorageKey,JSON.stringify(normalized));}catch{}
+  if(currentUserId())authenticatedAssistantMemory=normalized;
+  else try{localStorage.setItem(assistantStorageKey,JSON.stringify(normalized));}catch{}
   syncUserLibraryState();
   updateAssistantMemory();
 };
@@ -3771,5 +3821,16 @@ const refreshKinoraPersonalData=async()=>{
   if(!currentUserId())return;
   await Promise.all([loadSupabaseLibrary(),loadSupabaseReminders(),loadSupabaseUpcomingPreferences(),loadSupabaseCommunityReviews()]);
 };
+function resetPersonalDataForAuthTransition(previousUserId,nextUserId){
+  if(previousUserId===nextUserId&&nextUserId)return;
+  authenticatedAssistantMemory=defaultAssistantMemory();
+  authenticatedRadarStores.watchlist=[];
+  authenticatedRadarStores.hidden=[];
+  kinoraLibraryReady=false;
+  syncUserLibraryState();
+  updateAssistantMemory();
+  renderRadarLists();
+  if(comingMovies.length)showComing(filterRadarMovies(comingMovies));
+}
 document.addEventListener('kinora-auth-change',refreshKinoraPersonalData);
 setTimeout(refreshKinoraPersonalData,500);
