@@ -1189,16 +1189,67 @@ movieSearch?.addEventListener('input', () => {
 });
 if (comingResults) loadComing();
 
-const journalEntries=[...document.querySelectorAll('[data-journal-entry]')];
+const journalDataNode=document.querySelector('[data-journal-data]');
 const journalSearch=document.querySelector('[data-journal-search]');
+const journalFeatured=document.querySelector('[data-journal-featured]');
+const journalArchive=document.querySelector('[data-journal-archive]');
 const journalFilterButtons=[...document.querySelectorAll('[data-journal-filter]')];
+const journalEntries=(()=>{try{return JSON.parse(journalDataNode?.textContent||'[]');}catch(error){console.warn('Kinora review data could not be read.',error);return [];}})()
+  .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
 const validJournalCategories=new Set(journalFilterButtons.map(button=>button.dataset.journalFilter));
 const journalCategoryFromUrl=()=>{
   const value=new URL(location.href).searchParams.get('category')||'all';
   return validJournalCategories.has(value)?value:'all';
 };
 let journalCategory=journalCategoryFromUrl();
-const filterJournal=()=>{ const query=(journalSearch?.value||'').trim().toLowerCase(); let visible=0; journalEntries.forEach(entry=>{ const matchCategory=journalCategory==='all'||entry.dataset.category.split(' ').includes(journalCategory); const matchSearch=!query||entry.dataset.search.includes(query); const show=matchCategory&&matchSearch; entry.hidden=!show; if(show)visible++; }); journalFilterButtons.forEach(item=>{const active=item.dataset.journalFilter===journalCategory;item.classList.toggle('is-active',active);item.setAttribute('aria-pressed',String(active));}); const empty=document.querySelector('[data-journal-empty]'); if(empty)empty.hidden=visible!==0; };
+const journalElement=(tag,className='',text='')=>{const element=document.createElement(tag);if(className)element.className=className;if(text)element.textContent=text;return element;};
+const journalEntrySearchText=entry=>[entry.title,entry.intro,entry.hook,...(entry.tags||[])].join(' ').toLowerCase();
+const getEntriesForCategory=(category=journalCategory,query=(journalSearch?.value||'').trim().toLowerCase())=>journalEntries.filter(entry=>
+  (category==='all'||(entry.categories||[]).includes(category))&&(!query||journalEntrySearchText(entry).includes(query))
+);
+const renderFeaturedReview=entry=>{
+  if(!journalFeatured)return;
+  const label=journalElement('p','archive-label',entry?'Featured review':'No featured review');
+  if(!entry){
+    const empty=journalElement('div','journal-featured-empty empty-state');
+    empty.append(journalElement('h3','',journalSearch?.value.trim()?'No reviews match this search.':'No entries in this category yet.'),journalElement('p','',journalSearch?.value.trim()?'Try another title, director, or theme.':'New writing will appear here when it is published.'));
+    journalFeatured.replaceChildren(label,empty);
+    return;
+  }
+  const article=journalElement('article','journal-ticket is-visible');
+  article.dataset.journalFeatured=entry.id;
+  article.dataset.category=(entry.categories||[]).join(' ');
+  const posterLink=journalElement('a','ticket-poster');posterLink.href=entry.url;
+  const image=journalElement('img');image.src=entry.poster;image.alt=`Movie poster for ${entry.title}`;image.loading='eager';image.addEventListener('error',()=>{image.src=`${siteRoot}images/movie-poster-fallback.svg`;},{once:true});
+  posterLink.append(image,journalElement('span','',String(entry.year||'')));
+  const copy=journalElement('div','ticket-copy');
+  const category=journalElement('p','card-label',entry.category||'Review');
+  const heading=journalElement('h3');const titleLink=journalElement('a','',entry.title);titleLink.href=entry.url;heading.append(titleLink);
+  const stars=journalElement('div','stars','★'.repeat(Number(entry.rating)||0)+'☆'.repeat(Math.max(0,5-(Number(entry.rating)||0))));stars.setAttribute('aria-label',`${entry.rating} out of 5 stars`);
+  const intro=journalElement('p','',entry.intro||entry.hook||'');
+  const details=journalElement('dl');
+  [['Favorite scene',entry.favoriteScene],['Would I recommend it?',entry.recommendation]].forEach(([term,value])=>{const group=journalElement('div');group.append(journalElement('dt','',term),journalElement('dd','',value||'—'));details.append(group);});
+  const tags=journalElement('div','ticket-tags');(entry.tags||[]).forEach(tag=>tags.append(journalElement('span','',tag)));
+  copy.append(category,heading,stars,intro,details,tags);article.append(posterLink,copy);journalFeatured.replaceChildren(label,article);
+};
+const renderJournalArchive=entries=>{
+  if(!journalArchive)return;
+  if(!entries.length){journalArchive.replaceChildren(journalElement('p','journal-archive-empty','No additional entries in this category yet.'));return;}
+  const cards=entries.map(entry=>{
+    const link=journalElement('a','archive-item');link.href=entry.url;link.dataset.journalArchiveEntry=entry.id;
+    const image=journalElement('img');image.src=entry.poster;image.alt=`Movie poster for ${entry.title}`;image.loading='lazy';image.addEventListener('error',()=>{image.src=`${siteRoot}images/movie-poster-fallback.svg`;},{once:true});
+    const copy=journalElement('span','archive-copy');copy.append(journalElement('span','archive-title',entry.title),journalElement('span','archive-hook',entry.hook||entry.intro||''));
+    const rating=journalElement('span','archive-rating','★'.repeat(Number(entry.rating)||0)+'☆'.repeat(Math.max(0,5-(Number(entry.rating)||0))));rating.setAttribute('aria-label',`${entry.rating} out of 5 stars`);copy.append(rating);
+    link.append(image,copy,journalElement('span','archive-arrow','›'));return link;
+  });
+  journalArchive.replaceChildren(...cards);
+};
+const filterJournal=()=>{
+  const matches=getEntriesForCategory();
+  renderFeaturedReview(matches[0]||null);
+  renderJournalArchive(matches.slice(1));
+  journalFilterButtons.forEach(item=>{const active=item.dataset.journalFilter===journalCategory;item.classList.toggle('is-active',active);item.setAttribute('aria-pressed',String(active));});
+};
 const selectJournalCategory=(category,{updateHistory=true}={})=>{
   journalCategory=validJournalCategories.has(category)?category:'all';
   filterJournal();
@@ -1207,7 +1258,7 @@ const selectJournalCategory=(category,{updateHistory=true}={})=>{
 journalFilterButtons.forEach(button=>button.addEventListener('click',()=>selectJournalCategory(button.dataset.journalFilter)));
 journalSearch?.addEventListener('input',filterJournal);
 window.addEventListener('popstate',()=>selectJournalCategory(journalCategoryFromUrl(),{updateHistory:false}));
-if(journalEntries.length)filterJournal();
+if(journalDataNode)filterJournal();
 
 const trailerDialog=document.querySelector('[data-trailer-dialog]');
 const openTrailer=async movie=>{

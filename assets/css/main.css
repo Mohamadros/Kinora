@@ -92,6 +92,10 @@ html{scroll-behavior:auto!important}.hero{place-items:start!important;background
 
 /* Category filtering must override the cards' explicit grid/block display rules. */
 [data-journal-entry][hidden]{display:none!important}
+.journal-featured-empty{min-height:470px;display:grid;place-content:center;gap:10px;padding:clamp(28px,5vw,64px);background:radial-gradient(circle at 50% 35%,rgba(92,10,10,.22),transparent 48%),rgba(0,0,0,.2)}
+.journal-featured-empty h3{margin:0;color:var(--cream);font:600 clamp(1.8rem,3vw,3rem)/1 var(--serif)}
+.journal-featured-empty p,.journal-archive-empty{margin:0;color:var(--muted);font-size:.82rem}
+.journal-archive-empty{display:grid;min-height:180px;place-content:center;padding:28px;border:1px dashed rgba(212,175,55,.28);text-align:center}
 
 @media(max-width:1000px){
   .nav-dropdown-menu{left:auto!important;right:auto!important;width:100%!important;padding-left:0!important;text-align:center;transform:none!important}
@@ -100,5 +104,6 @@ html{scroll-behavior:auto!important}.hero{place-items:start!important;background
   .nav-dropdown-menu a{padding:11px 14px!important;text-align:center!important}
   .account-menu-panel{max-width:calc(100vw - 24px)}
 }
+@media(max-width:620px){.journal-featured-empty{min-height:260px}.journal-tools{align-items:stretch}.filter-pills{overflow-x:auto;flex-wrap:nowrap;padding-bottom:6px}.filter-pills button{flex:0 0 auto}.journal-search{min-width:0;width:100%}}
 .coming-section .section-heading h2{font-size:clamp(3.35rem,5.4vw,6rem)!important}
 @media(max-width:720px){.section-heading h1,.section-heading h2,.coming-section .section-heading h2{font-size:clamp(3rem,13vw,5.2rem)!important;line-height:1!important}.section-intro{margin-top:1.15rem!important}}
