@@ -4,18 +4,15 @@ kicker = "Marburg University voices"
 intro = "Four students from Marburg University reflect on how digital platforms shape their cinema habits, from quick streaming choices to shared movie nights."
 background = "images/auditorium-seats.png"
 weight = 40
-[[insights]]
-label = "Shared experience"
-title = "Cinema is a social activity."
-text = "Going to the cinema creates a deliberate occasion: people meet, watch together, and continue the experience through conversation."
-[[insights]]
-label = "Viewing context"
-title = "Where a film is watched changes how it is felt."
-text = "Convenience matters, but attention, company, mood, and the setting around a screening can matter as much as the title itself."
-[[insights]]
-label = "Human discovery"
-title = "Personal recommendations carry more meaning than popularity."
-text = "A trusted suggestion becomes useful when it responds to a person's mood, available time, and the people sharing the evening."
+[[stats]]
+value = "4"
+label = "Students interviewed"
+[[stats]]
+value = "3 of 4"
+label = "Mentioned shared viewing or post-film discussion"
+[[stats]]
+value = "2 of 4"
+label = "Discussed context or mood when choosing what to watch"
 [[quotes]]
 quote = "At Marburg University, cinema is not only about watching a film. It is a reason to meet, talk, and compare what everyone noticed."
 person = "Mohamad · Marburg University"
