@@ -333,18 +333,6 @@ document.querySelectorAll('a[href*="#"]').forEach(link=>link.addEventListener('c
   closeNav();
   scrollToHashTarget(hash,{updateHistory:true});
 }));
-let hashScrollTimers=[];
-const clearHashScrollTimers=()=>{hashScrollTimers.forEach(timer=>clearTimeout(timer));hashScrollTimers=[];};
-const correctHashScroll=()=>{if(location.hash)requestAnimationFrame(()=>scrollToHashTarget(location.hash,{behavior:'auto'}));};
-const stabilizeHashScroll=()=>{
-  clearHashScrollTimers();
-  [0,80,180,360,720,1200,2000,3200].forEach(delay=>{
-    hashScrollTimers.push(setTimeout(correctHashScroll,delay));
-  });
-};
-window.addEventListener('load',stabilizeHashScroll);
-window.addEventListener('pageshow',stabilizeHashScroll);
-window.addEventListener('hashchange',stabilizeHashScroll);
 const focusMovieMatchInput=()=>{
   if(location.hash!=='#mood-finder')return;
   const input=document.querySelector('[data-decision-form] select,[data-decision-form] input,[data-decision-form] button');
@@ -3631,13 +3619,12 @@ communityArchive?.addEventListener('wheel',event=>{
   if(!direction)return;
   const canMove=direction>0?communityActiveIndex<communityCards.length-1:communityActiveIndex>0;
   if(!canMove)return;
-  event.preventDefault();
   if(communityAnimating)return;
   if(Math.sign(communityWheelDelta)&&Math.sign(communityWheelDelta)!==direction)communityWheelDelta=0;
   communityWheelDelta+=delta;
   communityWheelDelta=Math.max(-communityWheelThreshold,Math.min(communityWheelThreshold,communityWheelDelta));
   flushCommunityWheel();
-},{passive:false});
+},{passive:true});
 memoryWall?.addEventListener('click',async event=>{
   const deleteButton=event.target.closest('[data-delete-review]');
   if(deleteButton){
