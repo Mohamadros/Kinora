@@ -1044,15 +1044,16 @@ const createRadarCard=rawMovie=>{
   const hide=document.createElement('button');
   hide.type='button'; hide.className='not-interested-button'; hide.textContent='Not interested';
   hide.addEventListener('click',async()=>{
-    if(!currentUserId()){
-      requireKinoraAuth('Log in to save Not Interested preferences.');
-      return;
-    }
-    if(!await saveSupabaseUpcomingPreference(movie,'not_interested'))return;
-    setRadarRecord(radarHiddenKey,radarRecordFromMovie(movie,{status:'not_interested'}));
-    removeRadarRecord(radarWatchlistKey,radarRecordFromMovie(movie));
+    const hiddenRecord=radarRecordFromMovie(movie,{status:'not_interested'});
+    setRadarRecord(radarHiddenKey,hiddenRecord);
     renderRadarLists();
     showComing(filterRadarMovies(comingMovies));
+    if(!currentUserId())return;
+    if(await saveSupabaseUpcomingPreference(movie,'not_interested'))return;
+    removeRadarRecord(radarHiddenKey,hiddenRecord);
+    renderRadarLists();
+    showComing(filterRadarMovies(comingMovies));
+    if(comingStatus)comingStatus.textContent='Not Interested could not be saved online. Please try again.';
   });
   actions.append(watch,trailer,hide);
   copy.append(meta,title,synopsis,signals,actions);
