@@ -17,7 +17,8 @@ Deploy:
 supabase functions deploy release-reminders
 ```
 
-Schedule it once per day with Supabase Scheduled Functions or `pg_cron`.
+The migration in `supabase/migrations/20260716170000_schedule_release_reminders.sql`
+schedules it once per day at 08:00 UTC with `pg_cron` and `pg_net`.
 The function atomically claims each due row with `reminder_status = processing`
 before calling Brevo, so concurrent runs cannot deliver the same reminder twice.
 It only marks a reminder as sent after the Brevo API call succeeds and returns a
