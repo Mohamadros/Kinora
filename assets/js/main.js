@@ -827,7 +827,7 @@ const updateUpcomingDebugPanel=()=>{
   Object.assign(values,{
     'Active search':activeFilters.query||'none',
     'Active genre':activeFilters.genre||'all',
-    'Active release range':activeFilters.date||'all announced future releases',
+    'Active release range':activeFilters.date||'this month',
     'Active buzz order':activeFilters.anticipated||'release date',
     'First 10 rendered TMDB IDs':upcomingState.visibleMovies.slice(0,10).map(movie=>movie.id||movie.tmdbId).join(', ')||'none'
   });
@@ -1256,19 +1256,19 @@ const getRadarFilters=()=>{
   };
   return {...upcomingState.activeFilters};
 };
-const addDays=(date,days)=>{
-  const next=new Date(date);
-  next.setDate(next.getDate()+days);
-  return next;
-};
 const toISODate=date=>date.toISOString().slice(0,10);
 const radarDateRange=(value)=>{
   const now=new Date();
   const today=toISODate(now);
-  if(value==='365')return {gte:today,lte:toISODate(addDays(now,365))};
+  if(value==='month')return {gte:today,lte:`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(new Date(now.getFullYear(),now.getMonth()+1,0).getDate()).padStart(2,'0')}`};
+  if(value==='3-months'){
+    const end=new Date(now);
+    end.setMonth(end.getMonth()+3);
+    return {gte:today,lte:toISODate(end)};
+  }
   if(value==='year')return {gte:today,lte:`${now.getFullYear()}-12-31`};
   if(value==='next-year')return {gte:`${now.getFullYear()+1}-01-01`,lte:`${now.getFullYear()+1}-12-31`};
-  return {gte:today,lte:''};
+  return {gte:today,lte:`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(new Date(now.getFullYear(),now.getMonth()+1,0).getDate()).padStart(2,'0')}`};
 };
 const KNOWN_UPCOMING_MOVIES=[
   {id:980431,title:'Avatar Aang: The Last Airbender'},
