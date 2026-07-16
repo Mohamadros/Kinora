@@ -15,10 +15,15 @@ const json = (body: unknown, status = 200) =>
   });
 
 const sendReminderEmail = async (reminder: Reminder, email: string) => {
-  const resendKey = Deno.env.get("RESEND_API_KEY") ?? "";
-  const from = Deno.env.get("KINORA_REMINDER_FROM") ?? "Kinora <reminders@kinora.app>";
-  if (!resendKey) {
-    return { ok: false, configured: false, error: "RESEND_API_KEY is not configured." };
+  const brevoKey = Deno.env.get("BREVO_API_KEY") ?? "";
+  const senderEmail = Deno.env.get("KINORA_REMINDER_FROM_EMAIL") ?? "";
+  const senderName = Deno.env.get("KINORA_REMINDER_FROM_NAME") ?? "Kinora";
+  if (!brevoKey || !senderEmail) {
+    return {
+      ok: false,
+      configured: false,
+      error: "BREVO_API_KEY and KINORA_REMINDER_FROM_EMAIL must be configured.",
+    };
   }
 
   const releaseDate = reminder.release_date ?? "Date not available";
@@ -32,17 +37,21 @@ ${releaseDate}
 
 It may now be available in cinemas. Check your local cinema listings for current availability.`;
 
-  const response = await fetch("https://api.resend.com/emails", {
+  const response = await fetch("https://api.brevo.com/v3/smtp/email", {
     method: "POST",
     headers: {
-      authorization: `Bearer ${resendKey}`,
+      "api-key": brevoKey,
+      accept: "application/json",
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      from,
-      to: email,
+      sender: {
+        name: senderName,
+        email: senderEmail,
+      },
+      to: [{ email }],
       subject,
-      text,
+      textContent: text,
     }),
   });
 
