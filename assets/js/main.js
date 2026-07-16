@@ -363,11 +363,14 @@ const tmdbUrl = (path, params = {}) => {
   Object.entries(params).forEach(([key, value]) => value !== '' && value !== undefined && value !== null && url.searchParams.set(key, value));
   return url;
 };
-const tmdb = async (path, params = {}) => {
+const tmdb = async (path, params = {}, externalSignal = null) => {
   if (!tmdbAvailable) throw new Error('TMDB proxy not configured');
   const url = tmdbUrl(path, params);
   if(tmdbDebug)console.debug('[Upcoming TMDB] request URL',url.toString());
   const controller=new AbortController();
+  const abortFromExternal=()=>controller.abort();
+  if(externalSignal?.aborted)controller.abort();
+  else externalSignal?.addEventListener('abort',abortFromExternal,{once:true});
   const timeout=setTimeout(()=>controller.abort(),30000);
   try{
     const response=await fetch(url,{signal:controller.signal,headers:{apikey:supabaseAnonKey,accept:'application/json'}});
@@ -381,7 +384,10 @@ const tmdb = async (path, params = {}) => {
   }catch(error){
     if(tmdbDebug)console.error('[Upcoming TMDB] fetch failed',error);
     throw error;
-  }finally{clearTimeout(timeout);}
+  }finally{
+    clearTimeout(timeout);
+    externalSignal?.removeEventListener('abort',abortFromExternal);
+  }
 };
 
 const posterFallback = title => {
@@ -3355,6 +3361,7 @@ setTimeout(()=>{
 },0);
 
 const communityForm=document.querySelector('[data-community-form]');
+const communityFormMessage=communityForm?.querySelector('[data-community-message]');
 const communityMovieInput=communityForm?.querySelector('[data-community-movie-search]');
 const communityMovieSuggestions=communityForm?.querySelector('[data-community-movie-suggestions]');
 const communityPosterPreview=communityForm?.querySelector('[data-community-poster-preview]');
@@ -3573,18 +3580,18 @@ const searchCommunityMovies=query=>{
     if(!tmdbAvailable||query.length<2){hideCommunityMovieSuggestions();return;}
     communityMovieSearchController?.abort();
     communityMovieSearchController=new AbortController();
+    if(communityFormMessage)communityFormMessage.textContent='Searching the movie catalogue…';
     try{
-      const url=new URL(`${apiBase}/search/movie`);
-      url.searchParams.set('query',query);
-      url.searchParams.set('include_adult','false');
-      url.searchParams.set('page','1');
-      const response=await fetch(url,{signal:communityMovieSearchController.signal,headers:{apikey:supabaseAnonKey,accept:'application/json'}});
-      if(!response.ok)throw new Error('Movie search failed');
-      const data=await response.json();
+      const data=await tmdb('/search/movie',{query,include_adult:'false',page:'1'},communityMovieSearchController.signal);
       const movies=(Array.isArray(data.results)?data.results:[]).slice(0,6).map(normalizeCommunityMovieResult);
       renderCommunityMovieSuggestions(movies);
+      if(communityFormMessage)communityFormMessage.textContent=movies.length?'':'No matching movies found.';
     }catch(error){
-      if(error.name!=='AbortError')hideCommunityMovieSuggestions();
+      if(error.name!=='AbortError'){
+        console.warn('Community TMDB movie search failed',error);
+        hideCommunityMovieSuggestions();
+        if(communityFormMessage)communityFormMessage.textContent='Movie search is temporarily unavailable. Please try again.';
+      }
     }
   },120);
 };
