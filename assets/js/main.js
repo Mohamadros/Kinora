@@ -874,7 +874,7 @@ const loadSupabaseUpcomingPreferences=async ()=>{
     status:'not_interested'
   })).filter(item=>item.title));
   renderRadarLists();
-  if(allUpcomingMovies.length)renderUpcomingResults(filterRadarMovies(allUpcomingMovies));
+  if(allUpcomingMovies.length)await refillUpcomingAfterPreferenceChange();
 };
 const loadSupabaseReminders=async ()=>{
   if(!supabaseClient||!currentUserId())return;
