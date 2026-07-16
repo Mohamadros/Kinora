@@ -40,6 +40,9 @@ const supabaseClient = !supabaseConfigError && supabaseGlobal ? supabaseGlobal.c
 const siteRoot = document.body?.dataset.siteRoot || '/';
 const tmdbAvailable=Boolean(supabaseUrl&&supabaseAnonKey);
 const tmdbDebug=new URLSearchParams(window.location.search).has('debugTmdb');
+const upcomingDebugEnabled=new URLSearchParams(window.location.search).has('debugUpcoming');
+const kinoraBuildIdentifier='UPCOMING_FIX_0a09d60_DEBUG1';
+console.info('[Kinora Build]',kinoraBuildIdentifier);
 const apiBase = supabaseUrl?`${supabaseUrl}/functions/v1/tmdb-catalogue`:'';
 const imageBase = 'https://image.tmdb.org/t/p/w500';
 const tmdbGenreNames = { 28:'Action', 12:'Adventure', 16:'Animation', 35:'Comedy', 80:'Crime', 99:'Documentary', 18:'Drama', 10751:'Family', 14:'Fantasy', 36:'History', 27:'Horror', 10402:'Music', 9648:'Mystery', 10749:'Romance', 878:'Science Fiction', 53:'Thriller', 10752:'War', 37:'Western' };
@@ -699,7 +702,68 @@ let visibleUpcomingMovies=[];
 let upcomingHasMoreResults=false;
 let upcomingLastRawCount=0;
 let upcomingLastNormalizedCount=0;
-const upcomingStructureDebug=tmdbDebug||new URLSearchParams(window.location.search).has('debugUpcoming');
+let upcomingInitialLoadPromise=null;
+let upcomingActivePagePromise=null;
+let upcomingRefillActive=false;
+let upcomingInitialRenderLogged=false;
+const upcomingDebugState={refillRan:false,refillPagesFetched:0,refillFinalEligibleCount:0,lastEvent:'Waiting for Upcoming activity'};
+const upcomingStructureDebug=tmdbDebug||upcomingDebugEnabled;
+let upcomingDebugPanel=null;
+let upcomingDebugValues=null;
+
+const activeNotInterestedIds=()=>new Set(radarHiddenRecords().map(record=>String(record.tmdbId||record.key||record.title)));
+const upcomingTraceSnapshot=()=>({
+  timestamp:new Date().toISOString(),
+  allCount:allUpcomingMovies.length,
+  filteredCount:filterRadarMovies(allUpcomingMovies).length,
+  visibleCount:visibleUpcomingMovies.length,
+  currentPage:comingPage,
+  comingLoading,
+  requestRevision:comingRequestRevision,
+  sessionRevision:authStateRevision,
+  signedIn:Boolean(currentUserId())
+});
+const updateUpcomingDebugPanel=()=>{
+  if(!upcomingDebugEnabled||!upcomingDebugValues)return;
+  const filteredCount=filterRadarMovies(allUpcomingMovies).length;
+  const values={
+    'Build identifier':kinoraBuildIdentifier,
+    'Last trace event':upcomingDebugState.lastEvent,
+    'Source mode':usingFallbackCatalogue?'fallback':'live',
+    'allUpcomingMovies.length':allUpcomingMovies.length,
+    'filteredUpcomingMovies.length':filteredUpcomingMovies.length,
+    'Current eligible count':filteredCount,
+    'visibleUpcomingMovies.length':visibleUpcomingMovies.length,
+    'visibleLimit':radarVisibleCount,
+    'Current TMDB page':comingPage,
+    'Total TMDB pages':comingTotalPages,
+    'hasMoreResults':upcomingHasMoreResults,
+    'Active Not Interested count':activeNotInterestedIds().size,
+    'Active Watchlist count':radarWatchlistRecords().length,
+    'comingLoading':comingLoading,
+    'Latest request revision':comingRequestRevision,
+    'Active session revision':authStateRevision,
+    'Refill ran':upcomingDebugState.refillRan,
+    'Pages fetched by refill':upcomingDebugState.refillPagesFetched,
+    'Final eligible count after refill':upcomingDebugState.refillFinalEligibleCount,
+    'Load More button exists':Boolean(loadMoreButton),
+    'Load More hidden':loadMoreButton?.hidden??true,
+    'Load More disabled':loadMoreButton?.disabled??true
+  };
+  upcomingDebugValues.replaceChildren(...Object.entries(values).map(([label,value])=>{
+    const row=document.createElement('div');
+    const term=document.createElement('dt');term.textContent=label;
+    const detail=document.createElement('dd');detail.textContent=String(value);
+    row.append(term,detail);
+    return row;
+  }));
+};
+const traceUpcoming=(event,details={})=>{
+  if(!upcomingStructureDebug)return;
+  upcomingDebugState.lastEvent=event;
+  console.debug(`[Upcoming Trace] ${event}`,{...upcomingTraceSnapshot(),...details});
+  updateUpcomingDebugPanel();
+};
 
 const beginUpcomingRequest=()=>{
   comingRequestRevision+=1;
@@ -860,11 +924,13 @@ const deleteSupabaseUpcomingPreference=async record=>{
 };
 const loadSupabaseUpcomingPreferences=async ()=>{
   if(!supabaseClient||!currentUserId())return;
+  traceUpcoming('Supabase preferences start loading');
   const requestedUserId=currentUserId();
   const requestedRevision=authStateRevision;
   const {data,error}=await supabaseClient.from('upcoming_movie_preferences').select('*').eq('user_id',requestedUserId).eq('preference','not_interested');
   if(requestedRevision!==authStateRevision||requestedUserId!==currentUserId())return;
   if(error){console.warn('Upcoming preferences load failed',error);return;}
+  traceUpcoming('Supabase preferences complete',{received:(data||[]).length});
   setRadarStore(radarHiddenKey,(data||[]).map(item=>({
     key:String(item.tmdb_id||`${item.movie_title}-${item.release_date||''}`).toLowerCase(),
     tmdbId:item.tmdb_id,
@@ -873,6 +939,12 @@ const loadSupabaseUpcomingPreferences=async ()=>{
     poster:item.poster_url||posterFallback(item.movie_title),
     status:'not_interested'
   })).filter(item=>item.title));
+  traceUpcoming('Not Interested IDs applied');
+  console.debug('[Upcoming Trace] preferences loaded', {
+    allCount: allUpcomingMovies.length,
+    notInterestedCount: activeNotInterestedIds().size,
+    filteredCount: filterRadarMovies(allUpcomingMovies).length
+  });
   renderRadarLists();
   if(allUpcomingMovies.length)await refillUpcomingAfterPreferenceChange();
 };
@@ -1154,6 +1226,9 @@ const renderUpcomingResults = movies => {
   comingStatus.textContent=`Showing ${total} of ${available} ${catalogueLabel} on the radar${!usingFallbackCatalogue&&comingTotalPages>comingPage?' — more available':''}.`;
   upcomingHasMoreResults=total<available||(!usingFallbackCatalogue&&tmdbAvailable&&comingPage<comingTotalPages);
   setUpcomingLoadMoreVisible(upcomingHasMoreResults);
+  const renderEvent=upcomingRefillActive?'Final render occurs':upcomingInitialRenderLogged?'Catalogue render occurs':'Initial render occurs';
+  upcomingInitialRenderLogged=true;
+  traceUpcoming(renderEvent);
   logUpcomingStructure();
 };
 const radarApiMovie=movie=>({
@@ -1190,13 +1265,14 @@ const radarDiscoverParams=(filters=getRadarFilters(),page=1)=>{
   if(filters.genre)params.with_genres=filters.genre;
   return params;
 };
-const loadComingPage = async (reset=false, render=true, request=beginUpcomingRequest()) => {
+const loadComingPageRequest = async (reset=false, render=true, request=beginUpcomingRequest()) => {
   if(!isCurrentUpcomingRequest(request))return false;
   if(comingLoading&&comingLoadingRevision===request.revision&&!reset)return false;
   if(reset){comingPage=0;comingTotalPages=1;radarVisibleCount=radarInitialCount;}
   if(comingPage>=comingTotalPages&&comingPage!==0)return;
   comingLoading=true;comingLoadingRevision=request.revision;if(loadMoreButton)loadMoreButton.disabled=true;comingStatus.textContent='Loading future releases…';
   const nextPage=comingPage+1;const filters=getRadarFilters();
+  traceUpcoming(nextPage===1?'TMDB page 1 starts loading':'Additional TMDB page requested',{page:nextPage});
   try{
     let data;
     if(filters.query.length>2){
@@ -1216,6 +1292,16 @@ const loadComingPage = async (reset=false, render=true, request=beginUpcomingReq
     upcomingLastRawCount=rawResults.length;
     upcomingLastNormalizedCount=batch.length;
     allUpcomingMovies=reset?mergeUpcomingCatalogue([],batch):mergeUpcomingCatalogue(allUpcomingMovies,batch);
+    traceUpcoming(nextPage===1?'TMDB page 1 completes':'Additional TMDB page completes',{page:nextPage,received:rawResults.length});
+    if(upcomingRefillActive){
+      upcomingDebugState.refillPagesFetched+=1;
+      console.debug('[Upcoming Trace] refill page fetched', {
+        page: nextPage,
+        received: rawResults.length,
+        accumulated: allUpcomingMovies.length,
+        eligibleCount: filterRadarMovies(allUpcomingMovies).length
+      });
+    }
     if(render)renderUpcomingResults(filterRadarMovies(allUpcomingMovies));
     return true;
   }catch(error){
@@ -1226,7 +1312,16 @@ const loadComingPage = async (reset=false, render=true, request=beginUpcomingReq
   }
   finally{
     if(comingLoadingRevision===request.revision){comingLoading=false;if(loadMoreButton)loadMoreButton.disabled=false;}
+    updateUpcomingDebugPanel();
   }
+};
+const loadComingPage=(...args)=>{
+  const pending=loadComingPageRequest(...args);
+  const tracked=pending.finally(()=>{
+    if(upcomingActivePagePromise===tracked)upcomingActivePagePromise=null;
+  });
+  upcomingActivePagePromise=tracked;
+  return tracked;
 };
 const ensureUpcomingVisibleCapacity=async (request,render=true)=>{
   let filtered=filterRadarMovies(allUpcomingMovies);
@@ -1239,12 +1334,39 @@ const ensureUpcomingVisibleCapacity=async (request,render=true)=>{
   return filtered;
 };
 async function refillUpcomingAfterPreferenceChange(){
-  if(comingLoading){
-    renderUpcomingResults(filterRadarMovies(allUpcomingMovies));
-    return;
-  }
+  if(upcomingInitialLoadPromise)await upcomingInitialLoadPromise;
+  if(upcomingActivePagePromise)await upcomingActivePagePromise;
+  const visibleLimit=radarVisibleCount;
+  const currentPage=comingPage;
+  const totalPages=comingTotalPages;
+  upcomingDebugState.refillRan=true;
+  upcomingDebugState.refillPagesFetched=0;
+  upcomingRefillActive=true;
+  traceUpcoming('refillUpcomingAfterPreferenceChange starts');
+  console.debug('[Upcoming Trace] refill start', {
+    visibleLimit,
+    currentPage,
+    totalPages,
+    eligibleCount: filterRadarMovies(allUpcomingMovies).length,
+    comingLoading
+  });
   const request=beginUpcomingRequest();
-  await ensureUpcomingVisibleCapacity(request,true);
+  try{
+    await ensureUpcomingVisibleCapacity(request,false);
+    upcomingDebugState.refillFinalEligibleCount=filterRadarMovies(allUpcomingMovies).length;
+    const hasMoreResults=upcomingDebugState.refillFinalEligibleCount>radarVisibleCount||(!usingFallbackCatalogue&&tmdbAvailable&&comingPage<comingTotalPages);
+    console.debug('[Upcoming Trace] refill complete', {
+      finalEligibleCount: filterRadarMovies(allUpcomingMovies).length,
+      currentPage:comingPage,
+      hasMoreResults
+    });
+    if(isCurrentUpcomingRequest(request))renderUpcomingResults(filterRadarMovies(allUpcomingMovies));
+  }catch(error){
+    console.error('[Upcoming Trace] refill failed',error);
+  }finally{
+    upcomingRefillActive=false;
+    updateUpcomingDebugPanel();
+  }
 }
 const activateFallbackCatalogue=()=>{
   usingFallbackCatalogue=true;
@@ -1312,6 +1434,56 @@ const applyRadarFilters=async ()=>{
   radarVisibleCount=radarInitialCount;
   renderUpcomingResults(filterRadarMovies(allUpcomingMovies));
 };
+const startUpcomingInitialLoad=()=>{
+  if(upcomingInitialLoadPromise)return upcomingInitialLoadPromise;
+  const pending=loadComing();
+  const tracked=pending.finally(()=>{
+    if(upcomingInitialLoadPromise===tracked)upcomingInitialLoadPromise=null;
+    updateUpcomingDebugPanel();
+  });
+  upcomingInitialLoadPromise=tracked;
+  return tracked;
+};
+const setupUpcomingDebugPanel=()=>{
+  if(!upcomingDebugEnabled||!comingResults)return;
+  upcomingDebugPanel=document.createElement('aside');
+  upcomingDebugPanel.className='upcoming-debug-panel';
+  upcomingDebugPanel.setAttribute('aria-label','Upcoming runtime diagnostics');
+  const heading=document.createElement('h3');heading.textContent='Upcoming runtime diagnostics';
+  const warning=document.createElement('p');warning.textContent='Temporary diagnostics are active because debugUpcoming=1 is present.';
+  upcomingDebugValues=document.createElement('dl');
+  const controls=document.createElement('div');controls.className='upcoming-debug-controls';
+  const actions=[
+    ['Reset Upcoming debug state',async()=>{
+      beginUpcomingRequest();
+      allUpcomingMovies=[];filteredUpcomingMovies=[];visibleUpcomingMovies=[];
+      comingPage=0;comingTotalPages=1;comingLoading=false;radarVisibleCount=radarInitialCount;
+      upcomingInitialRenderLogged=false;
+      upcomingHasMoreResults=false;upcomingDebugState.refillRan=false;upcomingDebugState.refillPagesFetched=0;upcomingDebugState.refillFinalEligibleCount=0;
+      comingResults.replaceChildren();setUpcomingLoadMoreVisible(false);traceUpcoming('Upcoming debug state reset');
+    }],
+    ['Reload TMDB page 1',async()=>{await startUpcomingInitialLoad();}],
+    ['Load authenticated preferences',async()=>{await loadSupabaseUpcomingPreferences();}],
+    ['Run refill manually',async()=>{await refillUpcomingAfterPreferenceChange();}],
+    ['Load one more TMDB page',async()=>{
+      const request=beginUpcomingRequest();
+      await loadComingPage(false,true,request);
+    }],
+    ['Render current catalogue',async()=>{renderUpcomingResults(filterRadarMovies(allUpcomingMovies));}]
+  ];
+  actions.forEach(([label,action])=>{
+    const button=document.createElement('button');button.type='button';button.textContent=label;
+    button.addEventListener('click',async()=>{
+      button.disabled=true;
+      try{await action();}catch(error){console.error(`[Upcoming Trace] debug control failed: ${label}`,error);}
+      finally{button.disabled=false;updateUpcomingDebugPanel();}
+    });
+    controls.append(button);
+  });
+  upcomingDebugPanel.append(heading,warning,upcomingDebugValues,controls);
+  document.querySelector('#upcoming-catalogue')?.before(upcomingDebugPanel);
+  updateUpcomingDebugPanel();
+};
 genreFilter?.addEventListener('change',applyRadarFilters);
 dateFilter?.addEventListener('change',applyRadarFilters);
 anticipatedFilter?.addEventListener('change',applyRadarFilters);
@@ -1326,7 +1498,7 @@ movieSearch?.addEventListener('input', () => {
     applyRadarFilters();
   },350);
 });
-if (comingResults){renderRadarLists();loadComing();}
+if (comingResults){setupUpcomingDebugPanel();renderRadarLists();startUpcomingInitialLoad();}
 
 const journalDataNode=document.querySelector('[data-journal-data]');
 const journalSearch=document.querySelector('[data-journal-search]');
