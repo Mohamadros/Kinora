@@ -777,6 +777,9 @@ const updateUpcomingDebugPanel=()=>{
     'Load More hidden':loadMoreButton?.hidden??true,
     'Load More disabled':loadMoreButton?.disabled??true
   };
+  if(upcomingDebugState.filterCounts){
+    Object.entries(upcomingDebugState.filterCounts).forEach(([label,value])=>{values[`Filter: ${label}`]=value;});
+  }
   const renderedCards=[...document.querySelectorAll('#upcoming-results .upcoming-card')];
   const gridRect=comingResults?.getBoundingClientRect();
   const firstCard=renderedCards[0];
@@ -1117,19 +1120,25 @@ const radarDateRange=(value)=>{
 };
 const filterRadarMovies=(movies,filters=getRadarFilters())=>{
   const hidden=radarHiddenRecords();
-  return movies.map(normalizeRadarMovie).filter(movie=>{
+  const range=radarDateRange(filters.date);
+  const normalized=movies.map(normalizeRadarMovie);
+  const valid=normalized.filter(movie=>movie.title&&(usingFallbackCatalogue||movie.id));
+  const dateRejected=[];
+  const afterDate=valid.filter(movie=>{
+    const releaseDate=movie.releaseDate||'';
+    const matches=!releaseDate||(!range.gte||releaseDate>=range.gte)&&(!range.lte||releaseDate<=range.lte);
+    if(!matches&&dateRejected.length<20)dateRejected.push({id:movie.id,title:movie.title,releaseDate,range});
+    return matches;
+  });
+  const afterSearch=afterDate.filter(movie=>{
     const searchable=`${movie.title} ${movie.overview} ${movie.genre} ${movie.director} ${movie.actors}`.toLowerCase();
-    const genreMatch=!filters.genre||movie.genreIds.includes(Number(filters.genre));
-    const range=radarDateRange(filters.date);
-    const releaseDate=movie.releaseDate||movie.release_date||'';
-    const dateMatch=!releaseDate||(!range.gte||releaseDate>=range.gte)&&(!range.lte||releaseDate<=range.lte);
-    const buzzMatch=!filters.anticipated||(filters.anticipated==='high'?movie.buzz==='High':buzzRank(movie.buzz)>=2);
-    return !hidden.some(record=>radarRecordMatchesMovie(record,movie))&&
-      (!filters.query||searchable.includes(filters.query))&&
-      genreMatch&&
-      dateMatch&&
-      buzzMatch;
-  }).sort((a,b)=>{
+    return !filters.query||searchable.includes(filters.query);
+  });
+  const afterGenre=afterSearch.filter(movie=>!filters.genre||movie.genreIds.includes(Number(filters.genre)));
+  const afterWatchlist=afterGenre;
+  const afterNotInterested=afterWatchlist.filter(movie=>!hidden.some(record=>radarRecordMatchesMovie(record,movie)));
+  const afterReminderLogic=afterNotInterested;
+  const sorted=[...afterReminderLogic].sort((a,b)=>{
     if(filters.anticipated==='high')return Number(b.popularity||0)-Number(a.popularity||0)||a.releaseDate.localeCompare(b.releaseDate);
     if(filters.anticipated==='medium'){
       const aMedium=a.buzz==='Medium'?0:a.buzz==='High'?1:2;
@@ -1138,6 +1147,28 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
     }
     return a.releaseDate.localeCompare(b.releaseDate);
   });
+  if(upcomingStructureDebug){
+    const ids=movies.map(movie=>movie.id||movie.tmdbId).filter(id=>id!==null&&id!==undefined);
+    const counts={
+      raw:movies.length,
+      normalized:normalized.length,
+      'unique TMDB IDs':new Set(ids.map(String)).size,
+      'missing TMDB IDs':movies.length-ids.length,
+      'after missing-field validation':valid.length,
+      'after release-date filter':afterDate.length,
+      'after search filter':afterSearch.length,
+      'after genre filter':afterGenre.length,
+      'after buzz sort (sorting only)':sorted.length,
+      'after watchlist exclusion (not excluded)':afterWatchlist.length,
+      'after Not Interested exclusion':afterNotInterested.length,
+      'after reminder logic':afterReminderLogic.length,
+      'after popularity/vote threshold (none)':sorted.length,
+      'final eligible':sorted.length
+    };
+    upcomingDebugState.filterCounts=counts;
+    console.debug('[Upcoming Filter Pipeline]',{filters,counts,dateRejected});
+  }
+  return sorted;
 };
 const hydrateRadarCredits=async (movie,directorNode,actorsNode)=>{
   if(!movie.id||!tmdbAvailable)return;
@@ -1297,12 +1328,14 @@ const radarApiMovie=movie=>({
 const mergeUpcomingCatalogue=(existing,incoming)=>{
   const merged=[];
   const seen=new Set();
+  let duplicateCount=0;
   [...existing,...incoming].forEach(movie=>{
     const key=String(movie.id||movie.tmdbId||`${movie.title}-${movie.release_date||movie.releaseDate||''}`);
-    if(seen.has(key))return;
+    if(seen.has(key)){duplicateCount+=1;return;}
     seen.add(key);
     merged.push(movie);
   });
+  if(upcomingStructureDebug)console.debug('[Upcoming Deduplication]',{existing:existing.length,incoming:incoming.length,merged:merged.length,duplicateCount,missingIds:[...existing,...incoming].filter(movie=>!movie.id&&!movie.tmdbId).length});
   return merged;
 };
 const radarDiscoverParams=(filters=getRadarFilters(),page=1)=>{
@@ -1388,15 +1421,18 @@ const upcomingPageScanLimit=10;
 const ensureUpcomingVisibleCapacity=async (request,render=true)=>{
   let filtered=filterRadarMovies(allUpcomingMovies);
   let pagesScanned=0;
+  let exitReason='target reached';
   while(isCurrentUpcomingRequest(request)&&filtered.length<radarVisibleCount&&comingPage<comingTotalPages&&pagesScanned<upcomingPageScanLimit){
     const loaded=await loadComingPage(false,false,request);
-    if(!loaded)break;
+    if(!loaded){exitReason=isCurrentUpcomingRequest(request)?'fetch failed or empty page':'request became stale';break;}
     pagesScanned+=1;
     filtered=filterRadarMovies(allUpcomingMovies);
   }
-  if(pagesScanned>=upcomingPageScanLimit&&filtered.length<radarVisibleCount){
-    traceUpcoming('Upcoming page scan safety limit reached',{pagesScanned,eligibleCount:filtered.length});
-  }
+  if(filtered.length>=radarVisibleCount)exitReason='target reached';
+  else if(!isCurrentUpcomingRequest(request))exitReason='request became stale';
+  else if(comingPage>=comingTotalPages)exitReason='no more TMDB pages';
+  else if(pagesScanned>=upcomingPageScanLimit)exitReason='safety limit reached';
+  traceUpcoming('Upcoming capacity loop exited',{exitReason,pagesScanned,eligibleCount:filtered.length,visibleLimit:radarVisibleCount,currentPage:comingPage,totalPages:comingTotalPages});
   if(render&&isCurrentUpcomingRequest(request))renderUpcomingResults(filtered);
   return filtered;
 };
