@@ -683,6 +683,16 @@ const genreFilter = document.querySelector('[data-genre-filter]');
 const movieSearch = document.querySelector('[data-movie-search]');
 const dateFilter = document.querySelector('[data-date-filter]');
 const anticipatedFilter = document.querySelector('[data-anticipated-filter]');
+const UPCOMING_SORT_STORAGE_KEY='kinoraUpcomingSortV1';
+const UPCOMING_SORT_MODES=new Set(['','high','medium']);
+if(anticipatedFilter){
+  try{
+    const savedSort=localStorage.getItem(UPCOMING_SORT_STORAGE_KEY)||'';
+    if(UPCOMING_SORT_MODES.has(savedSort))anticipatedFilter.value=savedSort;
+  }catch(error){
+    if(kinoraStorageDebug)console.warn('[Upcoming] sort preference could not be restored',error);
+  }
+}
 const loadMoreButton = document.querySelector('[data-load-more]');
 const loadMoreWrap = document.querySelector('[data-load-more-wrap]');
 const apiNotice = document.querySelector('[data-api-notice]');
@@ -832,6 +842,14 @@ const updateUpcomingDebugPanel=()=>{
   if(Number.isFinite(upcomingDebugState.backgroundCandidateCount))Object.assign(values,{
     'Background candidate pages loaded':upcomingDebugState.backgroundPagesLoaded||0,
     'Background candidate count':upcomingDebugState.backgroundCandidateCount
+  });
+  if(upcomingDebugState.ranking)Object.assign(values,{
+    'Ranking source':upcomingDebugState.ranking.activeSource,
+    'Ranking sort mode':upcomingDebugState.ranking.activeSortMode,
+    'Ranking movie count':upcomingDebugState.ranking.movieCount,
+    'Expected first ranked TMDB ID':upcomingDebugState.ranking.expectedFirstId??'none',
+    'Rendered first TMDB ID':upcomingState.visibleMovies[0]?.id??upcomingState.visibleMovies[0]?.tmdbId??'none',
+    'Top 20 ranked titles':upcomingDebugState.ranking.top20.map(movie=>`${movie.rank}. ${movie.title} (${movie.finalScore.toFixed(2)})`).join(' | ')
   });
   if(upcomingPerformance.startedAt){
     Object.assign(values,{
@@ -1153,27 +1171,56 @@ const renderRadarLists=()=>{
   radarLists.append(makeGroup('Watchlist',watchlist,'watchlist'),makeGroup('Not interested',hidden,'hidden'));
   logUpcomingStructure();
 };
-const UPCOMING_BUZZ_THRESHOLDS={high:12,medium:4};
-const getAnticipationScore=movie=>{
+const UPCOMING_ANTICIPATION_OVERRIDES=new Map([
+  [980431,6],   // Avatar Aang: The Last Airbender
+  [969681,6],   // Spider-Man: Brand New Day
+  [1003596,6],  // Avengers: Doomsday
+  [1170608,6],  // Dune: Part Three
+  [421892,6],   // Shrek 5
+  [806704,6]    // The Batman: Part II
+]);
+const getAnticipationScoreBreakdown=movie=>{
+  const tmdbId=Number(movie?.id??movie?.tmdbId??0);
   const popularity=Number(movie?.popularity||0);
   const voteCount=Number(movie?.vote_count??movie?.voteCount??0);
   const voteAverage=Number(movie?.vote_average??movie?.voteAverage??0);
   const releaseDate=String(movie?.release_date||movie?.releaseDate||'');
   const releaseTime=/^\d{4}-\d{2}-\d{2}$/.test(releaseDate)?Date.parse(`${releaseDate}T00:00:00Z`):NaN;
   const daysUntilRelease=Number.isFinite(releaseTime)?Math.max(0,(releaseTime-Date.now())/86400000):3650;
-  const proximitySignal=Math.max(0,6-daysUntilRelease/180);
-  const title=String(movie?.title||movie?.name||'');
-  const franchiseSignal=/(?:\bpart\s+(?:ii|iii|iv|[2-9])\b|\b(?:ii|iii|iv)\b|\b[2-9]\b|avengers|spider-man|batman|avatar|dune|shrek|frozen|star wars)/i.test(title)?6:0;
-  const ratingSignal=voteCount>0?voteAverage*.5:0;
-  const score=popularity+Math.log10(voteCount+1)*2+ratingSignal+proximitySignal+franchiseSignal;
-  return Number.isFinite(score)?score:0;
+  const proximityScore=Math.max(0,6-daysUntilRelease/180);
+  const voteContribution=Math.log10(voteCount+1)*2;
+  const ratingContribution=voteCount>0?voteAverage*.5:0;
+  const curatedBoost=UPCOMING_ANTICIPATION_OVERRIDES.get(tmdbId)??0;
+  const rawFinalScore=popularity+voteContribution+ratingContribution+proximityScore+curatedBoost;
+  return {
+    tmdbId,
+    popularity,
+    voteCount,
+    voteAverage,
+    releaseDate,
+    voteContribution,
+    ratingContribution,
+    proximityScore,
+    curatedBoost,
+    finalScore:Number.isFinite(rawFinalScore)?rawFinalScore:0
+  };
 };
+const getAnticipationScore=movie=>getAnticipationScoreBreakdown(movie).finalScore;
 const getUpcomingBuzzLevel=movie=>{
   const explicit=String(movie?.buzz||'').toLowerCase();
   if(!movie?.id&&['high','medium','low'].includes(explicit))return explicit;
+  const candidateScores=upcomingState.catalogueMovies
+    .filter(candidate=>candidate?.id||candidate?.tmdbId)
+    .map(getAnticipationScore)
+    .filter(Number.isFinite)
+    .sort((a,b)=>b-a);
+  if(candidateScores.length<5)return'low';
   const score=getAnticipationScore(movie);
-  if(score>=UPCOMING_BUZZ_THRESHOLDS.high)return'high';
-  if(score>=UPCOMING_BUZZ_THRESHOLDS.medium)return'medium';
+  const higherCount=candidateScores.findIndex(candidateScore=>candidateScore<=score);
+  const rank=higherCount<0?candidateScores.length:higherCount;
+  const percentile=rank/candidateScores.length;
+  if(percentile<.2)return'high';
+  if(percentile<.65)return'medium';
   return'low';
 };
 const normalizeRadarMovie=rawMovie=>{
@@ -1228,7 +1275,9 @@ const KNOWN_UPCOMING_MOVIES=[
   {id:969681,title:'Spider-Man: Brand New Day'},
   {id:1003596,title:'Avengers: Doomsday'},
   {id:1170608,title:'Dune: Part Three'},
-  {id:421892,title:'Shrek 5'}
+  {id:421892,title:'Shrek 5'},
+  {id:806704,title:'The Batman: Part II'},
+  {id:1433568,title:'The Rope Curse 4'}
 ];
 const filterRadarMovies=(movies,filters=getRadarFilters())=>{
   const hidden=radarHiddenRecords();
@@ -1292,7 +1341,8 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
     upcomingDebugState.filterCounts=counts;
     upcomingDebugState.knownMovies=KNOWN_UPCOMING_MOVIES.map(expected=>{
       const movie=unique.find(candidate=>String(candidate.id)===String(expected.id));
-      const base={...expected,endpoint:'/discover/movie',returned:Boolean(movie),releaseDate:movie?.releaseDate||'',popularity:Number(movie?.popularity||0),voteCount:Number(movie?.voteCount||0),voteAverage:Number(movie?.voteAverage||0),genreIds:movie?.genreIds||[],posterAvailable:Boolean(movie?.poster&&!String(movie.poster).startsWith('data:')),anticipationScore:movie?Number(getAnticipationScore(movie).toFixed(2)):0,buzzLevel:movie?getUpcomingBuzzLevel(movie):'unknown',cacheSource:upcomingState.sourceMode};
+      const scoreBreakdown=movie?getAnticipationScoreBreakdown(movie):null;
+      const base={...expected,endpoint:'/discover/movie',returned:Boolean(movie),releaseDate:movie?.releaseDate||'',popularity:Number(movie?.popularity||0),voteCount:Number(movie?.voteCount||0),voteAverage:Number(movie?.voteAverage||0),genreIds:movie?.genreIds||[],posterAvailable:Boolean(movie?.poster&&!String(movie.poster).startsWith('data:')),scoreBreakdown,anticipationScore:scoreBreakdown?Number(scoreBreakdown.finalScore.toFixed(2)):0,buzzLevel:movie?getUpcomingBuzzLevel(movie):'unknown',cacheSource:upcomingState.sourceMode};
       if(!movie)return {...base,reason:'not returned in the currently loaded TMDB pages for this server query'};
       if(!valid.includes(movie))return {...base,reason:'rejected: invalid TMDB ID or title'};
       if(!futureDated.includes(movie))return {...base,reason:`rejected by future-date rule (${movie.releaseDate||'missing date'})`};
@@ -1302,7 +1352,14 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
       if(!afterNotInterested.includes(movie))return {...base,reason:'excluded by Not Interested preference'};
       return {...base,reason:`eligible · ${movie.releaseDate} · score ${getAnticipationScore(movie).toFixed(2)} · ${getUpcomingBuzzLevel(movie)} buzz`};
     });
-    const buzzCandidates=afterGenre.slice(0,20).map(movie=>({id:movie.id,title:movie.title,popularity:movie.popularity,voteCount:movie.voteCount,voteAverage:movie.voteAverage,anticipationScore:getAnticipationScore(movie),buzzLevel:getUpcomingBuzzLevel(movie),selectedMode:filters.anticipated||'release-date',included:true,reason:'included; buzz changes order only'}));
+    const buzzCandidates=sorted.slice(0,20).map((movie,index)=>({rank:index+1,id:movie.id,title:movie.title,...getAnticipationScoreBreakdown(movie),buzzLevel:getUpcomingBuzzLevel(movie),selectedMode:filters.anticipated||'release-date',included:true,reason:'included; buzz changes order only'}));
+    upcomingDebugState.ranking={
+      activeSource:upcomingState.sourceMode,
+      activeSortMode:filters.anticipated||'release-date',
+      movieCount:sorted.length,
+      top20:buzzCandidates,
+      expectedFirstId:sorted[0]?.id||null
+    };
     console.debug('[Upcoming Filter Pipeline]',{filters,counts,dateRejected,buzzCandidates});
     console.table(upcomingDebugState.knownMovies);
     console.assert(afterReminderLogic.length===sorted.length,'Upcoming sorting changed the eligible movie count',{before:afterReminderLogic.length,after:sorted.length,mode:filters.anticipated});
@@ -1756,7 +1813,13 @@ const setupUpcomingDebugPanel=()=>{
 };
 genreFilter?.addEventListener('change',applyRadarFilters);
 dateFilter?.addEventListener('change',applyRadarFilters);
-anticipatedFilter?.addEventListener('change',applyRadarFilters);
+anticipatedFilter?.addEventListener('change',()=>{
+  try{localStorage.setItem(UPCOMING_SORT_STORAGE_KEY,anticipatedFilter.value);}
+  catch(error){if(kinoraStorageDebug)console.warn('[Upcoming] sort preference could not be saved',error);}
+  upcomingState.visibleLimit=radarInitialCount;
+  renderUpcomingResults(filterRadarMovies(upcomingState.catalogueMovies));
+  updateUpcomingDebugPanel();
+});
 loadMoreButton?.addEventListener('click',async()=>{
   const request=beginUpcomingRequest();
   upcomingState.visibleLimit+=radarLoadMoreCount;
