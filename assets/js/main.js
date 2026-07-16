@@ -375,6 +375,7 @@ const tmdbUrl = (path, params = {}) => {
 };
 const upcomingPerformance={startedAt:0,firstCardsAt:0,settledAt:0,catalogueRequests:0,detailRequests:0,creditsRequests:0,videoRequests:0,totalCandidates:0,renderCount:0,fullRenderCount:0};
 const tmdbResponseCache=new Map();
+const UPCOMING_CACHE_VERSION='kinora-upcoming-v5';
 const resetUpcomingPerformance=()=>{
   Object.assign(upcomingPerformance,{startedAt:performance.now(),firstCardsAt:0,settledAt:0,catalogueRequests:0,detailRequests:0,creditsRequests:0,videoRequests:0,totalCandidates:0,renderCount:0,fullRenderCount:0});
 };
@@ -387,13 +388,16 @@ const recordUpcomingRequest=path=>{
 const tmdb = async (path, params = {}, externalSignal = null) => {
   if (!tmdbAvailable) throw new Error('TMDB proxy not configured');
   const url = tmdbUrl(path, params);
-  const cacheKey=url.toString();
+  const cacheKey=`${UPCOMING_CACHE_VERSION}|${url.toString()}`;
   if(typeof upcomingDebugState!=='undefined'){
     upcomingDebugState.lastRequestUrl=cacheKey;
     upcomingDebugState.lastCacheKey=cacheKey;
     upcomingDebugState.lastRequestCacheHit=tmdbResponseCache.has(cacheKey);
   }
-  if(tmdbResponseCache.has(cacheKey))return tmdbResponseCache.get(cacheKey);
+  if(tmdbResponseCache.has(cacheKey)){
+    if(typeof upcomingState!=='undefined')upcomingState.sourceMode='cache';
+    return tmdbResponseCache.get(cacheKey);
+  }
   recordUpcomingRequest(path);
   if(tmdbDebug)console.debug('[Upcoming TMDB] request URL',url.toString());
   const controller=new AbortController();
@@ -413,6 +417,7 @@ const tmdb = async (path, params = {}, externalSignal = null) => {
       data?.body&&typeof data.body==='object'?data.body:data;
     if(!payload||typeof payload!=='object')throw new Error('TMDB proxy returned an unsupported response shape.');
     tmdbResponseCache.set(cacheKey,payload);
+    if(typeof upcomingState!=='undefined')upcomingState.sourceMode='live-proxy';
     return payload;
   }catch(error){
     if(tmdbDebug)console.error('[Upcoming TMDB] fetch failed',error);
@@ -756,6 +761,8 @@ const upcomingState={
 };
 const radarInitialCount = 20;
 const radarLoadMoreCount = 20;
+const upcomingCandidateTarget=100;
+const upcomingCandidatePageLimit=Math.ceil(upcomingCandidateTarget/20);
 let upcomingLastRawCount=0;
 let upcomingLastNormalizedCount=0;
 let upcomingInitialLoadPromise=null;
@@ -785,7 +792,7 @@ const updateUpcomingDebugPanel=()=>{
   const values={
     'Build identifier':kinoraBuildIdentifier,
     'Last trace event':upcomingDebugState.lastEvent,
-    'Source mode':upcomingState.usingFallback?'fallback':'live',
+    'Source mode':upcomingState.sourceMode,
     'upcomingState.catalogueMovies.length':upcomingState.catalogueMovies.length,
     'upcomingState.filteredMovies.length':upcomingState.filteredMovies.length,
     'Current eligible count':filteredCount,
@@ -810,7 +817,7 @@ const updateUpcomingDebugPanel=()=>{
   Object.assign(values,{
     'Active search':activeFilters.query||'none',
     'Active genre':activeFilters.genre||'all',
-    'Active release range':activeFilters.date||'all upcoming',
+    'Active release range':activeFilters.date||'all announced future releases',
     'Active buzz order':activeFilters.anticipated||'release date',
     'First 10 rendered TMDB IDs':upcomingState.visibleMovies.slice(0,10).map(movie=>movie.id||movie.tmdbId).join(', ')||'none'
   });
@@ -822,6 +829,10 @@ const updateUpcomingDebugPanel=()=>{
   if(upcomingDebugState.knownMovies){
     upcomingDebugState.knownMovies.forEach(movie=>{values[`Known movie: ${movie.title}`]=movie.reason;});
   }
+  if(Number.isFinite(upcomingDebugState.backgroundCandidateCount))Object.assign(values,{
+    'Background candidate pages loaded':upcomingDebugState.backgroundPagesLoaded||0,
+    'Background candidate count':upcomingDebugState.backgroundCandidateCount
+  });
   if(upcomingPerformance.startedAt){
     Object.assign(values,{
       'Performance: time to first cards (ms)':upcomingPerformance.firstCardsAt?Math.round(upcomingPerformance.firstCardsAt-upcomingPerformance.startedAt):'pending',
@@ -1147,7 +1158,15 @@ const getAnticipationScore=movie=>{
   const popularity=Number(movie?.popularity||0);
   const voteCount=Number(movie?.vote_count??movie?.voteCount??0);
   const voteAverage=Number(movie?.vote_average??movie?.voteAverage??0);
-  return popularity+Math.log10(voteCount+1)*2+voteAverage*.5;
+  const releaseDate=String(movie?.release_date||movie?.releaseDate||'');
+  const releaseTime=/^\d{4}-\d{2}-\d{2}$/.test(releaseDate)?Date.parse(`${releaseDate}T00:00:00Z`):NaN;
+  const daysUntilRelease=Number.isFinite(releaseTime)?Math.max(0,(releaseTime-Date.now())/86400000):3650;
+  const proximitySignal=Math.max(0,6-daysUntilRelease/180);
+  const title=String(movie?.title||movie?.name||'');
+  const franchiseSignal=/(?:\bpart\s+(?:ii|iii|iv|[2-9])\b|\b(?:ii|iii|iv)\b|\b[2-9]\b|avengers|spider-man|batman|avatar|dune|shrek|frozen|star wars)/i.test(title)?6:0;
+  const ratingSignal=voteCount>0?voteAverage*.5:0;
+  const score=popularity+Math.log10(voteCount+1)*2+ratingSignal+proximitySignal+franchiseSignal;
+  return Number.isFinite(score)?score:0;
 };
 const getUpcomingBuzzLevel=movie=>{
   const explicit=String(movie?.buzz||'').toLowerCase();
@@ -1199,8 +1218,7 @@ const toISODate=date=>date.toISOString().slice(0,10);
 const radarDateRange=(value)=>{
   const now=new Date();
   const today=toISODate(now);
-  if(value==='30')return {gte:today,lte:toISODate(addDays(now,30))};
-  if(value==='90')return {gte:today,lte:toISODate(addDays(now,90))};
+  if(value==='365')return {gte:today,lte:toISODate(addDays(now,365))};
   if(value==='year')return {gte:today,lte:`${now.getFullYear()}-12-31`};
   if(value==='next-year')return {gte:`${now.getFullYear()+1}-01-01`,lte:`${now.getFullYear()+1}-12-31`};
   return {gte:today,lte:''};
@@ -1274,17 +1292,19 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
     upcomingDebugState.filterCounts=counts;
     upcomingDebugState.knownMovies=KNOWN_UPCOMING_MOVIES.map(expected=>{
       const movie=unique.find(candidate=>String(candidate.id)===String(expected.id));
-      if(!movie)return {...expected,reason:'not returned in the currently loaded TMDB pages for this server query'};
-      if(!valid.includes(movie))return {...expected,reason:'rejected: invalid TMDB ID or title'};
-      if(!futureDated.includes(movie))return {...expected,reason:`rejected by future-date rule (${movie.releaseDate||'missing date'})`};
-      if(!afterDate.includes(movie))return {...expected,reason:`rejected by release range (${movie.releaseDate||'missing date'})`};
-      if(!afterSearch.includes(movie))return {...expected,reason:'rejected by title search'};
-      if(!afterGenre.includes(movie))return {...expected,reason:'rejected by selected genre'};
-      if(!afterNotInterested.includes(movie))return {...expected,reason:'excluded by Not Interested preference'};
-      return {...expected,reason:`eligible · ${movie.releaseDate} · score ${getAnticipationScore(movie).toFixed(2)} · ${getUpcomingBuzzLevel(movie)} buzz`};
+      const base={...expected,endpoint:'/discover/movie',returned:Boolean(movie),releaseDate:movie?.releaseDate||'',popularity:Number(movie?.popularity||0),voteCount:Number(movie?.voteCount||0),voteAverage:Number(movie?.voteAverage||0),genreIds:movie?.genreIds||[],posterAvailable:Boolean(movie?.poster&&!String(movie.poster).startsWith('data:')),anticipationScore:movie?Number(getAnticipationScore(movie).toFixed(2)):0,buzzLevel:movie?getUpcomingBuzzLevel(movie):'unknown',cacheSource:upcomingState.sourceMode};
+      if(!movie)return {...base,reason:'not returned in the currently loaded TMDB pages for this server query'};
+      if(!valid.includes(movie))return {...base,reason:'rejected: invalid TMDB ID or title'};
+      if(!futureDated.includes(movie))return {...base,reason:`rejected by future-date rule (${movie.releaseDate||'missing date'})`};
+      if(!afterDate.includes(movie))return {...base,reason:`rejected by release range (${movie.releaseDate||'missing date'})`};
+      if(!afterSearch.includes(movie))return {...base,reason:'rejected by title search'};
+      if(!afterGenre.includes(movie))return {...base,reason:'rejected by selected genre'};
+      if(!afterNotInterested.includes(movie))return {...base,reason:'excluded by Not Interested preference'};
+      return {...base,reason:`eligible · ${movie.releaseDate} · score ${getAnticipationScore(movie).toFixed(2)} · ${getUpcomingBuzzLevel(movie)} buzz`};
     });
     const buzzCandidates=afterGenre.slice(0,20).map(movie=>({id:movie.id,title:movie.title,popularity:movie.popularity,voteCount:movie.voteCount,voteAverage:movie.voteAverage,anticipationScore:getAnticipationScore(movie),buzzLevel:getUpcomingBuzzLevel(movie),selectedMode:filters.anticipated||'release-date',included:true,reason:'included; buzz changes order only'}));
     console.debug('[Upcoming Filter Pipeline]',{filters,counts,dateRejected,buzzCandidates});
+    console.table(upcomingDebugState.knownMovies);
     console.assert(afterReminderLogic.length===sorted.length,'Upcoming sorting changed the eligible movie count',{before:afterReminderLogic.length,after:sorted.length,mode:filters.anticipated});
   }
   return sorted;
@@ -1432,9 +1452,7 @@ const radarApiMovie=movie=>({
   ...movie,
   releaseType:'cinema',
   platform:'Cinema release',
-  trailerAvailable:false,
-  buzz:Number(movie.popularity||0)>=10?'High':Number(movie.popularity||0)>=3?'Medium':'Low',
-  tag:Number(movie.popularity||0)>=10?'Highly anticipated':Number(movie.popularity||0)>=3?'No audience rating yet':'Limited information'
+  trailerAvailable:false
 });
 const mergeUpcomingCatalogue=(existing,incoming)=>{
   const merged=[];
@@ -1451,21 +1469,21 @@ const mergeUpcomingCatalogue=(existing,incoming)=>{
 };
 const radarDiscoverParams=(filters=getRadarFilters(),page=1)=>{
   const range=radarDateRange(filters.date);
-  const sortBy=filters.anticipated==='high'?'popularity.desc':
-    'primary_release_date.asc';
   const params={
     'primary_release_date.gte':range.gte,
     region:'DE',
     with_release_type:'2|3|4',
-    sort_by:sortBy,
+    sort_by:'popularity.desc',
     include_adult:'false',
+    include_video:'false',
+    language:'en-US',
     page:String(page)
   };
   if(range.lte)params['primary_release_date.lte']=range.lte;
   if(filters.genre)params.with_genres=filters.genre;
   return params;
 };
-const loadComingPageRequest = async (reset=false, render=true, request=beginUpcomingRequest()) => {
+const loadComingPageRequest = async (reset=false, render=true, request=beginUpcomingRequest(), background=false) => {
   if(!isCurrentUpcomingRequest(request))return false;
   if(upcomingState.isLoading&&upcomingState.loadingRevision===request.revision&&!reset)return false;
   if(reset){
@@ -1475,7 +1493,8 @@ const loadComingPageRequest = async (reset=false, render=true, request=beginUpco
     setUpcomingLoadMoreVisible(false);
   }
   if(upcomingState.currentPage>=upcomingState.totalPages&&upcomingState.currentPage!==0)return;
-  upcomingState.isLoading=true;upcomingState.loadingRevision=request.revision;if(loadMoreButton)loadMoreButton.disabled=true;comingStatus.textContent='Loading future releases…';
+  upcomingState.isLoading=true;upcomingState.loadingRevision=request.revision;
+  if(!background){if(loadMoreButton)loadMoreButton.disabled=true;comingStatus.textContent='Loading future releases…';}
   const nextPage=upcomingState.currentPage+1;const filters=getRadarFilters();
   traceUpcoming(nextPage===1?'TMDB page 1 starts loading':'Additional TMDB page requested',{page:nextPage});
   try{
@@ -1517,7 +1536,7 @@ const loadComingPageRequest = async (reset=false, render=true, request=beginUpco
     return false;
   }
   finally{
-    if(upcomingState.loadingRevision===request.revision){upcomingState.isLoading=false;if(loadMoreButton)loadMoreButton.disabled=false;}
+    if(upcomingState.loadingRevision===request.revision){upcomingState.isLoading=false;if(!background&&loadMoreButton)loadMoreButton.disabled=false;}
     updateUpcomingDebugPanel();
   }
 };
@@ -1528,6 +1547,22 @@ const loadComingPage=(...args)=>{
   });
   upcomingActivePagePromise=tracked;
   return tracked;
+};
+const warmUpcomingCandidateCatalogue=async request=>{
+  let pagesLoaded=0;
+  while(isCurrentUpcomingRequest(request)&&
+    upcomingState.currentPage<upcomingState.totalPages&&
+    upcomingState.currentPage<upcomingCandidatePageLimit&&
+    upcomingState.catalogueMovies.length<upcomingCandidateTarget){
+    const loaded=await loadComingPage(false,false,request,true);
+    if(!loaded)break;
+    pagesLoaded+=1;
+  }
+  if(!isCurrentUpcomingRequest(request))return;
+  upcomingDebugState.backgroundPagesLoaded=pagesLoaded;
+  upcomingDebugState.backgroundCandidateCount=upcomingState.catalogueMovies.length;
+  renderUpcomingResults(filterRadarMovies(upcomingState.catalogueMovies));
+  traceUpcoming('Background candidate loading complete',{pagesLoaded,candidates:upcomingState.catalogueMovies.length});
 };
 const upcomingPageScanLimit=4;
 const ensureUpcomingVisibleCapacity=async (request,render=true)=>{
@@ -1634,6 +1669,7 @@ const loadComing = async () => {
         'Catalogue renders':upcomingPerformance.renderCount,
         'Full catalogue rerenders':upcomingPerformance.fullRenderCount
       });
+      warmUpcomingCandidateCatalogue(request).catch(error=>console.warn('Upcoming background candidate loading failed',error));
       return;
     }catch(error){
       if(error.name==='AbortError'||!isCurrentUpcomingRequest(request))return;
@@ -1662,6 +1698,7 @@ const applyRadarFilters=async ()=>{
     if(filterRadarMovies(upcomingState.catalogueMovies).length<upcomingState.visibleLimit)await ensureUpcomingVisibleCapacity(request,true);
     upcomingPerformance.settledAt=performance.now();
     updateUpcomingDebugPanel();
+    warmUpcomingCandidateCatalogue(request).catch(error=>console.warn('Upcoming background candidate loading failed',error));
     return;
   }
   upcomingState.visibleLimit=radarInitialCount;
