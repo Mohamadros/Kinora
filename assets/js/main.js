@@ -187,8 +187,13 @@ const setupAuth=async ()=>{
   kinoraSession=data.session;
   if(kinoraSession)await fetchKinoraProfile();
   updateAuthUI();
-  supabaseClient.auth.onAuthStateChange(async (_event,session)=>{
+  supabaseClient.auth.onAuthStateChange(async (event,session)=>{
     const previousUserId=currentUserId();
+    if(event==='INITIAL_SESSION'&&previousUserId===(session?.user?.id||'')){
+      kinoraSession=session;
+      updateAuthUI();
+      return;
+    }
     kinoraSession=session;
     authStateRevision++;
     kinoraLibraryReady=false;
@@ -282,7 +287,7 @@ authForm?.addEventListener('submit',async event=>{
   setTimeout(()=>authDialog?.close(),700);
   document.dispatchEvent(new CustomEvent('kinora-auth-change'));
 });
-setupAuth();
+const kinoraAuthReady=setupAuth();
 
 const closeNav = () => {
   toggle?.setAttribute('aria-expanded', 'false');
@@ -1379,12 +1384,18 @@ const loadComingPage=(...args)=>{
   upcomingActivePagePromise=tracked;
   return tracked;
 };
+const upcomingPageScanLimit=10;
 const ensureUpcomingVisibleCapacity=async (request,render=true)=>{
   let filtered=filterRadarMovies(allUpcomingMovies);
-  while(isCurrentUpcomingRequest(request)&&filtered.length<radarVisibleCount&&comingPage<comingTotalPages){
+  let pagesScanned=0;
+  while(isCurrentUpcomingRequest(request)&&filtered.length<radarVisibleCount&&comingPage<comingTotalPages&&pagesScanned<upcomingPageScanLimit){
     const loaded=await loadComingPage(false,false,request);
     if(!loaded)break;
+    pagesScanned+=1;
     filtered=filterRadarMovies(allUpcomingMovies);
+  }
+  if(pagesScanned>=upcomingPageScanLimit&&filtered.length<radarVisibleCount){
+    traceUpcoming('Upcoming page scan safety limit reached',{pagesScanned,eligibleCount:filtered.length});
   }
   if(render&&isCurrentUpcomingRequest(request))renderUpcomingResults(filtered);
   return filtered;
@@ -4260,11 +4271,15 @@ function resetPersonalDataForAuthTransition(previousUserId,nextUserId){
   if(allUpcomingMovies.length)renderUpcomingResults(filterRadarMovies(allUpcomingMovies));
 }
 document.addEventListener('kinora-auth-change',refreshKinoraPersonalData);
-setTimeout(refreshKinoraPersonalData,500);
 if(comingResults){
   setupUpcomingDebugPanel();
   renderRadarLists();
-  Promise.resolve().then(startUpcomingInitialLoad).catch(error=>{
+  Promise.resolve().then(async()=>{
+    await kinoraAuthReady;
+    if(currentUserId())await Promise.all([loadSupabaseReminders(),loadSupabaseUpcomingPreferences()]);
+    await startUpcomingInitialLoad();
+    if(currentUserId())Promise.all([loadSupabaseLibrary(),loadSupabaseCommunityReviews()]).catch(error=>console.warn('Personal data background load failed',error));
+  }).catch(error=>{
     console.error('Upcoming initialization failed',error);
     comingLoading=false;
     if(comingStatus)comingStatus.textContent='The upcoming catalogue could not be initialized. Please refresh and try again.';
