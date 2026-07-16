@@ -382,8 +382,11 @@ const tmdb = async (path, params = {}, externalSignal = null) => {
       console.debug('[Upcoming TMDB] response status',response.status);
       console.debug('[Upcoming TMDB] response body',data);
     }
-    if(!response.ok)throw new Error(data?.error||`TMDB request failed: ${response.status}`);
-    return data;
+    if(!response.ok||data?.ok===false)throw new Error(data?.error||data?.message||`TMDB request failed: ${response.status}`);
+    const payload=data?.data&&typeof data.data==='object'?data.data:
+      data?.body&&typeof data.body==='object'?data.body:data;
+    if(!payload||typeof payload!=='object')throw new Error('TMDB proxy returned an unsupported response shape.');
+    return payload;
   }catch(error){
     if(tmdbDebug)console.error('[Upcoming TMDB] fetch failed',error);
     throw error;
@@ -685,6 +688,14 @@ const removeRadarRecord=(key,recordOrTitle)=>{
   const recordKey=typeof recordOrTitle==='string'?'':recordOrTitle?.key;
   setRadarStore(key,radarStoreArray(key).filter(item=>item.title!==title&&(!recordKey||item.key!==recordKey)));
 };
+const reconcileRadarPreferenceStores=()=>{
+  const hidden=radarHiddenRecords();
+  const watchlist=radarWatchlistRecords().filter(record=>!hidden.some(hiddenRecord=>
+    String(hiddenRecord.tmdbId||'')&&String(hiddenRecord.tmdbId)===String(record.tmdbId||'')||
+    hiddenRecord.key&&hiddenRecord.key===record.key||hiddenRecord.title===record.title
+  ));
+  setRadarStore(radarWatchlistKey,watchlist);
+};
 let allUpcomingMovies = [];
 let comingPage = 0;
 let comingTotalPages = 1;
@@ -939,6 +950,7 @@ const loadSupabaseUpcomingPreferences=async ()=>{
     poster:item.poster_url||posterFallback(item.movie_title),
     status:'not_interested'
   })).filter(item=>item.title));
+  reconcileRadarPreferenceStores();
   traceUpcoming('Not Interested IDs applied');
   console.debug('[Upcoming Trace] preferences loaded', {
     allCount: allUpcomingMovies.length,
@@ -964,6 +976,7 @@ const loadSupabaseReminders=async ()=>{
     status:item.reminder_status||'active',
     reminderSent:Boolean(item.reminder_sent)
   })).filter(item=>item.title));
+  reconcileRadarPreferenceStores();
   renderRadarLists();
   console.info('Reminder loaded',{count:(data||[]).length,emailSchedulerConfigured:reminderEmailBackendActive,emailProviderConfigured:reminderEmailProviderActive});
 };
@@ -1177,6 +1190,11 @@ const createRadarCard=rawMovie=>{
       }
       return;
     }
+    const hiddenRecord=radarHiddenRecords().find(record=>radarRecordMatchesMovie(record,movie));
+    if(hiddenRecord){
+      if(currentUserId()&&!await deleteSupabaseUpcomingPreference(hiddenRecord))return;
+      removeRadarRecord(radarHiddenKey,hiddenRecord);
+    }
     if(await saveSupabaseReminder(movie)){
       watch.textContent='REMINDER SAVED';
       watch.classList.add('is-active');
@@ -1192,6 +1210,9 @@ const createRadarCard=rawMovie=>{
   hide.type='button'; hide.className='not-interested-button'; hide.textContent='Not interested';
   hide.addEventListener('click',async()=>{
     const hiddenRecord=radarRecordFromMovie(movie,{status:'not_interested'});
+    const reminderRecord=radarWatchlistRecords().find(record=>radarRecordMatchesMovie(record,movie));
+    if(reminderRecord&&currentUserId())await cancelSupabaseReminder(reminderRecord);
+    if(reminderRecord)removeRadarRecord(radarWatchlistKey,reminderRecord);
     setRadarRecord(radarHiddenKey,hiddenRecord);
     renderRadarLists();
     await refillUpcomingAfterPreferenceChange();
@@ -1268,7 +1289,13 @@ const radarDiscoverParams=(filters=getRadarFilters(),page=1)=>{
 const loadComingPageRequest = async (reset=false, render=true, request=beginUpcomingRequest()) => {
   if(!isCurrentUpcomingRequest(request))return false;
   if(comingLoading&&comingLoadingRevision===request.revision&&!reset)return false;
-  if(reset){comingPage=0;comingTotalPages=1;radarVisibleCount=radarInitialCount;}
+  if(reset){
+    comingPage=0;comingTotalPages=1;radarVisibleCount=radarInitialCount;
+    allUpcomingMovies=[];filteredUpcomingMovies=[];visibleUpcomingMovies=[];
+    comingResults?.replaceChildren();
+    if(comingEmpty)comingEmpty.hidden=true;
+    setUpcomingLoadMoreVisible(false);
+  }
   if(comingPage>=comingTotalPages&&comingPage!==0)return;
   comingLoading=true;comingLoadingRevision=request.revision;if(loadMoreButton)loadMoreButton.disabled=true;comingStatus.textContent='Loading future releases…';
   const nextPage=comingPage+1;const filters=getRadarFilters();
@@ -1498,8 +1525,6 @@ movieSearch?.addEventListener('input', () => {
     applyRadarFilters();
   },350);
 });
-if (comingResults){setupUpcomingDebugPanel();renderRadarLists();startUpcomingInitialLoad();}
-
 const journalDataNode=document.querySelector('[data-journal-data]');
 const journalSearch=document.querySelector('[data-journal-search]');
 const journalFeatured=document.querySelector('[data-journal-featured]');
@@ -4207,3 +4232,14 @@ function resetPersonalDataForAuthTransition(previousUserId,nextUserId){
 }
 document.addEventListener('kinora-auth-change',refreshKinoraPersonalData);
 setTimeout(refreshKinoraPersonalData,500);
+if(comingResults){
+  setupUpcomingDebugPanel();
+  renderRadarLists();
+  Promise.resolve().then(startUpcomingInitialLoad).catch(error=>{
+    console.error('Upcoming initialization failed',error);
+    comingLoading=false;
+    if(comingStatus)comingStatus.textContent='The upcoming catalogue could not be initialized. Please refresh and try again.';
+    setUpcomingLoadMoreVisible(false);
+    updateUpcomingDebugPanel();
+  });
+}
