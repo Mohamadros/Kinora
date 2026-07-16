@@ -109,3 +109,7 @@ html{scroll-behavior:auto!important}.hero{place-items:start!important;background
 @media(max-width:620px){.journal-featured-empty{min-height:260px}.journal-tools{align-items:stretch}.filter-pills{overflow-x:auto;flex-wrap:nowrap;padding-bottom:6px}.filter-pills button{flex:0 0 auto}.journal-search{min-width:0;width:100%}}
 .coming-section .section-heading h2{font-size:clamp(3.35rem,5.4vw,6rem)!important}
 @media(max-width:720px){.section-heading h1,.section-heading h2,.coming-section .section-heading h2{font-size:clamp(3rem,13vw,5.2rem)!important;line-height:1!important}.section-intro{margin-top:1.15rem!important}}
+
+/* Keep the two preference panels aligned even when one list is empty. */
+.coming-section .radar-lists{align-items:stretch}
+.coming-section .radar-list-group{align-self:stretch;height:100%}

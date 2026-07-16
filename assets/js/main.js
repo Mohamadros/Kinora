@@ -373,9 +373,23 @@ const tmdbUrl = (path, params = {}) => {
   Object.entries(params).forEach(([key, value]) => value !== '' && value !== undefined && value !== null && url.searchParams.set(key, value));
   return url;
 };
+const upcomingPerformance={startedAt:0,firstCardsAt:0,settledAt:0,catalogueRequests:0,detailRequests:0,creditsRequests:0,videoRequests:0,totalCandidates:0,renderCount:0,fullRenderCount:0};
+const tmdbResponseCache=new Map();
+const resetUpcomingPerformance=()=>{
+  Object.assign(upcomingPerformance,{startedAt:performance.now(),firstCardsAt:0,settledAt:0,catalogueRequests:0,detailRequests:0,creditsRequests:0,videoRequests:0,totalCandidates:0,renderCount:0,fullRenderCount:0});
+};
+const recordUpcomingRequest=path=>{
+  if(path==='/discover/movie'||path==='/search/movie')upcomingPerformance.catalogueRequests+=1;
+  else if(/^\/movie\/\d+\/credits$/.test(path))upcomingPerformance.creditsRequests+=1;
+  else if(/^\/movie\/\d+\/videos$/.test(path))upcomingPerformance.videoRequests+=1;
+  else if(/^\/movie\/\d+$/.test(path))upcomingPerformance.detailRequests+=1;
+};
 const tmdb = async (path, params = {}, externalSignal = null) => {
   if (!tmdbAvailable) throw new Error('TMDB proxy not configured');
   const url = tmdbUrl(path, params);
+  const cacheKey=url.toString();
+  if(tmdbResponseCache.has(cacheKey))return tmdbResponseCache.get(cacheKey);
+  recordUpcomingRequest(path);
   if(tmdbDebug)console.debug('[Upcoming TMDB] request URL',url.toString());
   const controller=new AbortController();
   const abortFromExternal=()=>controller.abort();
@@ -393,6 +407,7 @@ const tmdb = async (path, params = {}, externalSignal = null) => {
     const payload=data?.data&&typeof data.data==='object'?data.data:
       data?.body&&typeof data.body==='object'?data.body:data;
     if(!payload||typeof payload!=='object')throw new Error('TMDB proxy returned an unsupported response shape.');
+    tmdbResponseCache.set(cacheKey,payload);
     return payload;
   }catch(error){
     if(tmdbDebug)console.error('[Upcoming TMDB] fetch failed',error);
@@ -724,7 +739,6 @@ let comingRequestController = null;
 let radarVisibleCount = 20;
 const radarInitialCount = 20;
 const radarLoadMoreCount = 20;
-const radarCreditsCache=new Map();
 let usingFallbackCatalogue=false;
 let filteredUpcomingMovies=[];
 let visibleUpcomingMovies=[];
@@ -779,6 +793,19 @@ const updateUpcomingDebugPanel=()=>{
     'Load More hidden':loadMoreButton?.hidden??true,
     'Load More disabled':loadMoreButton?.disabled??true
   };
+  if(upcomingPerformance.startedAt){
+    Object.assign(values,{
+      'Performance: time to first cards (ms)':upcomingPerformance.firstCardsAt?Math.round(upcomingPerformance.firstCardsAt-upcomingPerformance.startedAt):'pending',
+      'Performance: total settle time (ms)':upcomingPerformance.settledAt?Math.round(upcomingPerformance.settledAt-upcomingPerformance.startedAt):'pending',
+      'Performance: catalogue requests':upcomingPerformance.catalogueRequests,
+      'Performance: detail requests':upcomingPerformance.detailRequests,
+      'Performance: credits requests':upcomingPerformance.creditsRequests,
+      'Performance: video requests':upcomingPerformance.videoRequests,
+      'Performance: candidates received':upcomingPerformance.totalCandidates,
+      'Performance: catalogue renders':upcomingPerformance.renderCount,
+      'Performance: full rerenders':upcomingPerformance.fullRenderCount
+    });
+  }
   if(upcomingDebugState.filterCounts){
     Object.entries(upcomingDebugState.filterCounts).forEach(([label,value])=>{values[`Filter: ${label}`]=value;});
   }
@@ -1155,18 +1182,15 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
     return !filters.query||searchable.includes(filters.query);
   });
   const afterGenre=afterSearch.filter(movie=>!filters.genre||movie.genreIds.includes(Number(filters.genre)));
-  const afterBuzz=afterGenre.filter(movie=>{
-    if(filters.anticipated==='high')return getUpcomingBuzzLevel(movie)==='high';
-    if(filters.anticipated==='medium')return getUpcomingBuzzLevel(movie)==='medium';
-    return true;
-  });
-  const afterWatchlist=afterBuzz;
+  const afterWatchlist=afterGenre;
   const afterNotInterested=afterWatchlist.filter(movie=>!hidden.some(record=>radarRecordMatchesMovie(record,movie)));
   const afterReminderLogic=afterNotInterested;
   const sorted=[...afterReminderLogic].sort((a,b)=>{
     if(filters.anticipated==='high')return getAnticipationScore(b)-getAnticipationScore(a)||a.releaseDate.localeCompare(b.releaseDate);
     if(filters.anticipated==='medium'){
-      return getAnticipationScore(b)-getAnticipationScore(a)||a.releaseDate.localeCompare(b.releaseDate);
+      const aMedium=getUpcomingBuzzLevel(a)==='medium'?0:1;
+      const bMedium=getUpcomingBuzzLevel(b)==='medium'?0:1;
+      return aMedium-bMedium||getAnticipationScore(b)-getAnticipationScore(a)||a.releaseDate.localeCompare(b.releaseDate);
     }
     return a.releaseDate.localeCompare(b.releaseDate);
   });
@@ -1181,7 +1205,7 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
       'after release-date filter':afterDate.length,
       'after search filter':afterSearch.length,
       'after genre filter':afterGenre.length,
-      'after buzz-mode eligibility':afterBuzz.length,
+      'after buzz-mode eligibility (sorting only)':afterGenre.length,
       'after buzz sort':sorted.length,
       'after watchlist exclusion (not excluded)':afterWatchlist.length,
       'after Not Interested exclusion':afterNotInterested.length,
@@ -1190,28 +1214,11 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
       'final eligible':sorted.length
     };
     upcomingDebugState.filterCounts=counts;
-    const buzzCandidates=afterGenre.slice(0,20).map(movie=>({id:movie.id,title:movie.title,popularity:movie.popularity,voteCount:movie.voteCount,voteAverage:movie.voteAverage,anticipationScore:getAnticipationScore(movie),buzzLevel:getUpcomingBuzzLevel(movie),selectedMode:filters.anticipated||'release-date',included:afterBuzz.includes(movie),reason:afterBuzz.includes(movie)?'included':`excluded: ${getUpcomingBuzzLevel(movie)} is not ${filters.anticipated}`}));
+    const buzzCandidates=afterGenre.slice(0,20).map(movie=>({id:movie.id,title:movie.title,popularity:movie.popularity,voteCount:movie.voteCount,voteAverage:movie.voteAverage,anticipationScore:getAnticipationScore(movie),buzzLevel:getUpcomingBuzzLevel(movie),selectedMode:filters.anticipated||'release-date',included:true,reason:'included; buzz changes order only'}));
     console.debug('[Upcoming Filter Pipeline]',{filters,counts,dateRejected,buzzCandidates});
-    if(filters.anticipated==='high')sorted.forEach(movie=>{if(getUpcomingBuzzLevel(movie)!=='high')console.error('Invalid Medium/Low movie in Most Anticipated',movie);});
+    console.assert(afterReminderLogic.length===sorted.length,'Upcoming sorting changed the eligible movie count',{before:afterReminderLogic.length,after:sorted.length,mode:filters.anticipated});
   }
   return sorted;
-};
-const hydrateRadarCredits=async (movie,directorNode,actorsNode)=>{
-  if(!movie.id||!tmdbAvailable)return;
-  const cacheKey=String(movie.id);
-  try{
-    let credits=radarCreditsCache.get(cacheKey);
-    if(!credits){
-      const data=await tmdb(`/movie/${movie.id}/credits`);
-      const director=data.crew?.find(person=>person.job==='Director')?.name||'Director not announced';
-      const actors=(data.cast||[]).slice(0,3).map(person=>person.name).filter(Boolean).join(', ')||'Main cast not fully announced';
-      credits={director,actors};
-      radarCreditsCache.set(cacheKey,credits);
-    }
-    directorNode.textContent=credits.director;
-    actorsNode.textContent=credits.actors;
-    allUpcomingMovies=allUpcomingMovies.map(item=>(item.id&&item.id===movie.id)?{...item,director:credits.director,actors:credits.actors}:item);
-  }catch{}
 };
 const createRadarCard=rawMovie=>{
   const movie=normalizeRadarMovie(rawMovie);
@@ -1241,8 +1248,6 @@ const createRadarCard=rawMovie=>{
   synopsis.textContent=movie.overview;
   const signals=document.createElement('dl');
   signals.className='radar-signals';
-  let directorNode;
-  let actorsNode;
   [
     ['Release',movie.releaseDate||'Date TBA'],
     ['Buzz',movie.buzz],
@@ -1252,11 +1257,8 @@ const createRadarCard=rawMovie=>{
     const group=document.createElement('div');
     const dt=document.createElement('dt'); dt.textContent=term;
     const dd=document.createElement('dd'); dd.textContent=value;
-    if(term==='Director')directorNode=dd;
-    if(term==='Main actors')actorsNode=dd;
     group.append(dt,dd); signals.append(group);
   });
-  hydrateRadarCredits(movie,directorNode,actorsNode);
   const actions=document.createElement('div');
   actions.className='radar-actions';
   const watch=document.createElement('button');
@@ -1316,6 +1318,8 @@ const createRadarCard=rawMovie=>{
   return card;
 };
 const renderUpcomingResults = movies => {
+  upcomingPerformance.renderCount+=1;
+  upcomingPerformance.fullRenderCount+=1;
   filteredUpcomingMovies=[...movies];
   visibleUpcomingMovies=filteredUpcomingMovies.slice(0,radarVisibleCount);
   const cards=visibleUpcomingMovies.flatMap(movie=>{
@@ -1325,6 +1329,7 @@ const renderUpcomingResults = movies => {
   if(upcomingStructureDebug)console.trace('[Upcoming Trace] replacing catalogue children',{incomingCards:cards.length,selector:'#upcoming-results'});
   comingResults.replaceChildren(...cards);
   cards.forEach(card=>card.classList.add('is-visible'));
+  if(cards.length&&!usingFallbackCatalogue&&!upcomingPerformance.firstCardsAt)upcomingPerformance.firstCardsAt=performance.now();
   if(comingEmpty)comingEmpty.hidden=cards.length>0;
   if(!cards.length){
     comingStatus.textContent='No movies found for this filter. Try changing your options.';
@@ -1385,7 +1390,6 @@ const loadComingPageRequest = async (reset=false, render=true, request=beginUpco
   if(reset){
     comingPage=0;comingTotalPages=1;radarVisibleCount=radarInitialCount;
     allUpcomingMovies=[];filteredUpcomingMovies=[];visibleUpcomingMovies=[];
-    comingResults?.replaceChildren();
     if(comingEmpty)comingEmpty.hidden=true;
     setUpcomingLoadMoreVisible(false);
   }
@@ -1408,6 +1412,7 @@ const loadComingPageRequest = async (reset=false, render=true, request=beginUpco
     if(!isCurrentUpcomingRequest(request))return false;
     comingPage=data.page;comingTotalPages=Math.min(data.totalPages,500);
     const rawResults=Array.isArray(data.results)?data.results:[];
+    upcomingPerformance.totalCandidates+=rawResults.length;
     const batch=rawResults.map(radarApiMovie);
     upcomingLastRawCount=rawResults.length;
     upcomingLastNormalizedCount=batch.length;
@@ -1443,7 +1448,7 @@ const loadComingPage=(...args)=>{
   upcomingActivePagePromise=tracked;
   return tracked;
 };
-const upcomingPageScanLimit=10;
+const upcomingPageScanLimit=4;
 const ensureUpcomingVisibleCapacity=async (request,render=true)=>{
   let filtered=filterRadarMovies(allUpcomingMovies);
   let pagesScanned=0;
@@ -1516,6 +1521,7 @@ const loadComing = async () => {
   fillGenres(Object.entries(genreNames).map(([id,name])=>({id,name})));
   if(tmdbAvailable){
     activateFallbackCatalogue();
+    resetUpcomingPerformance();
     const request=beginUpcomingRequest();
     if(apiNotice){
       const heading=apiNotice.querySelector('strong');
@@ -1529,10 +1535,22 @@ const loadComing = async () => {
       genreNames=Object.fromEntries(genres.genres.map(g=>[g.id,g.name]));
       fillGenres(genres.genres);
       usingFallbackCatalogue=false;
-      const firstPageLoaded=await loadComingPage(true,false,request);
+      const firstPageLoaded=await loadComingPage(true,true,request);
       if(!firstPageLoaded||!allUpcomingMovies.length)throw new Error('TMDB returned no upcoming movies.');
       apiNotice.hidden=true;
-      await ensureUpcomingVisibleCapacity(request,true);
+      if(filterRadarMovies(allUpcomingMovies).length<radarVisibleCount)await ensureUpcomingVisibleCapacity(request,true);
+      upcomingPerformance.settledAt=performance.now();
+      if(upcomingStructureDebug)console.table({
+        'Time to first cards (ms)':Math.round(upcomingPerformance.firstCardsAt-upcomingPerformance.startedAt),
+        'Total settle time (ms)':Math.round(upcomingPerformance.settledAt-upcomingPerformance.startedAt),
+        'Catalogue requests':upcomingPerformance.catalogueRequests,
+        'Detail requests':upcomingPerformance.detailRequests,
+        'Credits requests':upcomingPerformance.creditsRequests,
+        'Video requests':upcomingPerformance.videoRequests,
+        'Candidates received':upcomingPerformance.totalCandidates,
+        'Catalogue renders':upcomingPerformance.renderCount,
+        'Full catalogue rerenders':upcomingPerformance.fullRenderCount
+      });
       return;
     }catch(error){
       if(error.name==='AbortError'||!isCurrentUpcomingRequest(request))return;
@@ -1555,9 +1573,12 @@ const applyRadarFilters=async ()=>{
   if(tmdbAvailable&&!usingFallbackCatalogue){
     const request=beginUpcomingRequest();
     radarVisibleCount=radarInitialCount;
-    const firstPageLoaded=await loadComingPage(true,false,request);
+    resetUpcomingPerformance();
+    const firstPageLoaded=await loadComingPage(true,true,request);
     if(!firstPageLoaded){if(isCurrentUpcomingRequest(request))activateFallbackCatalogue();return;}
-    await ensureUpcomingVisibleCapacity(request,true);
+    if(filterRadarMovies(allUpcomingMovies).length<radarVisibleCount)await ensureUpcomingVisibleCapacity(request,true);
+    upcomingPerformance.settledAt=performance.now();
+    updateUpcomingDebugPanel();
     return;
   }
   radarVisibleCount=radarInitialCount;
