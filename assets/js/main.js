@@ -1,14 +1,12 @@
-/* Framework-free interactions.
-   Add a TMDB Read Access Token in hugo.toml to enable live movie data.
-   A static Hugo site exposes browser-side tokens. For a public production
-   project, route TMDB requests through a serverless function instead. */
+/* Framework-free interactions. Live TMDB requests are routed through the
+   Kinora Supabase Edge Function so private provider credentials never enter
+   the generated GitHub Pages source. */
 
 const header = document.querySelector('[data-header]');
 const toggle = document.querySelector('.nav-toggle');
 const nav = document.querySelector('.primary-nav');
 const navDropdown = document.querySelector('[data-nav-dropdown]');
 const navDropdownToggle = document.querySelector('[data-nav-dropdown-toggle]');
-const token = document.querySelector('meta[name="tmdb-token"]')?.content.trim() || '';
 const rawSupabaseUrl = document.querySelector('meta[name="supabase-url"]')?.content || '';
 const rawSupabaseAnonKey = document.querySelector('meta[name="supabase-anon-key"]')?.content || '';
 const normalizeSupabaseProjectUrl = value => {
@@ -40,7 +38,9 @@ console.info('Kinora Supabase config', {
 });
 const supabaseClient = !supabaseConfigError && supabaseGlobal ? supabaseGlobal.createClient(supabaseUrl, supabaseAnonKey) : null;
 const siteRoot = document.body?.dataset.siteRoot || '/';
-const apiBase = 'https://api.themoviedb.org/3';
+const tmdbAvailable=Boolean(supabaseUrl&&supabaseAnonKey);
+const tmdbDebug=new URLSearchParams(window.location.search).has('debugTmdb');
+const apiBase = supabaseUrl?`${supabaseUrl}/functions/v1/tmdb-catalogue`:'';
 const imageBase = 'https://image.tmdb.org/t/p/w500';
 const tmdbGenreNames = { 28:'Action', 12:'Adventure', 16:'Animation', 35:'Comedy', 80:'Crime', 99:'Documentary', 18:'Drama', 10751:'Family', 14:'Fantasy', 36:'History', 27:'Horror', 10402:'Music', 9648:'Mystery', 10749:'Romance', 878:'Science Fiction', 53:'Thriller', 10752:'War', 37:'Western' };
 let genreNames = {...tmdbGenreNames};
@@ -357,18 +357,31 @@ const sectionObserver = new IntersectionObserver(entries => entries.forEach(entr
 document.querySelectorAll('main section[id]').forEach(section => sectionObserver.observe(section));
 
 const tmdbUrl = (path, params = {}) => {
-  const url = new URL(`${apiBase}${path}`);
+  if(!apiBase)throw new Error('TMDB proxy not configured');
+  const url = new URL(apiBase);
+  url.searchParams.set('path',path);
   Object.entries(params).forEach(([key, value]) => value !== '' && value !== undefined && value !== null && url.searchParams.set(key, value));
   return url;
 };
 const tmdb = async (path, params = {}) => {
-  if (!token) throw new Error('TMDB token not configured');
+  if (!tmdbAvailable) throw new Error('TMDB proxy not configured');
   const url = tmdbUrl(path, params);
+  if(tmdbDebug)console.debug('[Upcoming TMDB] request URL',url.toString());
   const controller=new AbortController();
-  const timeout=setTimeout(()=>controller.abort(),8000);
-  const response = await fetch(url, { signal:controller.signal, headers: { Authorization: `Bearer ${token}`, accept: 'application/json' } }).finally(()=>clearTimeout(timeout));
-  if (!response.ok) throw new Error(`TMDB request failed: ${response.status}`);
-  return response.json();
+  const timeout=setTimeout(()=>controller.abort(),30000);
+  try{
+    const response=await fetch(url,{signal:controller.signal,headers:{apikey:supabaseAnonKey,accept:'application/json'}});
+    const data=await response.json().catch(()=>({error:'TMDB proxy returned invalid JSON.'}));
+    if(tmdbDebug){
+      console.debug('[Upcoming TMDB] response status',response.status);
+      console.debug('[Upcoming TMDB] response body',data);
+    }
+    if(!response.ok)throw new Error(data?.error||`TMDB request failed: ${response.status}`);
+    return data;
+  }catch(error){
+    if(tmdbDebug)console.error('[Upcoming TMDB] fetch failed',error);
+    throw error;
+  }finally{clearTimeout(timeout);}
 };
 
 const posterFallback = title => {
@@ -536,7 +549,7 @@ const scoreMoodMovie=(rawMovie,config)=>{
   return ratingScore+genreScore+targetScore+fitBoost+posterScore-avoidScore;
 };
 const fetchMoodMovies=async (key,config)=>{
-  if(!token)throw new Error('TMDB token not configured');
+  if(!tmdbAvailable)throw new Error('TMDB proxy not configured');
   const pages=[1,2,3,4,5].map(page=>tmdb('/discover/movie',{
     with_genres:config.genres,
     sort_by:page%2?'vote_average.desc':'popularity.desc',
@@ -570,7 +583,7 @@ document.querySelectorAll('[data-mood]').forEach(button => button.addEventListen
   moodPanel.querySelector('[data-mood-reason]').textContent = config.reason;
   moodPanel.querySelector('input[name="mood"]').value = config.label;
   const status = moodPanel.querySelector('[data-mood-status]'); const results = moodPanel.querySelector('[data-mood-results]');
-  status.textContent = token ? `Searching for films that fit ${config.label.toLowerCase()} emotionally…` : 'Showing curated mood selections. Add a TMDB token for live discovery.';
+  status.textContent = tmdbAvailable ? `Searching for films that fit ${config.label.toLowerCase()} emotionally…` : 'Showing curated mood selections while live discovery is unavailable.';
   moodPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
   try {
     const movies=await fetchMoodMovies(key,config);
@@ -961,7 +974,7 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
   });
 };
 const hydrateRadarCredits=async (movie,directorNode,actorsNode)=>{
-  if(!movie.id||!token)return;
+  if(!movie.id||!tmdbAvailable)return;
   const cacheKey=String(movie.id);
   try{
     let credits=radarCreditsCache.get(cacheKey);
@@ -1092,7 +1105,7 @@ const showComing = (movies, append=false) => {
   const available=movies.length;
   const catalogueLabel=usingFallbackCatalogue?(available===1?'curated upcoming film':'curated upcoming films'):(available===1?'future film':'future films');
   comingStatus.textContent=`Showing ${total} of ${available} ${catalogueLabel} on the radar${!usingFallbackCatalogue&&comingTotalPages>comingPage?' — more available':''}.`;
-  if(loadMoreButton) loadMoreButton.hidden=total>=available&&(usingFallbackCatalogue||!token||comingPage>=comingTotalPages);
+  if(loadMoreButton) loadMoreButton.hidden=total>=available&&(usingFallbackCatalogue||!tmdbAvailable||comingPage>=comingTotalPages);
 };
 const radarApiMovie=movie=>({
   ...movie,
@@ -1153,8 +1166,8 @@ const activateFallbackCatalogue=()=>{
     apiNotice.hidden=false;
     const heading=apiNotice.querySelector('strong');
     const copy=apiNotice.querySelector('span');
-    if(heading)heading.textContent=token?'Live catalogue unavailable':'Demo catalogue active';
-    if(copy)copy.textContent=token?'TMDB could not be reached. Showing Kinora’s curated upcoming releases instead.':'Add a TMDB Read Access Token in hugo.toml to load the live future-release catalogue.';
+    if(heading)heading.textContent=tmdbAvailable?'Live catalogue unavailable':'Demo catalogue active';
+    if(copy)copy.textContent=tmdbAvailable?'TMDB could not be reached. Showing Kinora’s curated upcoming releases instead.':'Live movie configuration is unavailable. Showing Kinora’s curated upcoming releases instead.';
   }
   comingMovies=fallbackUpcoming;
   comingPage=1;
@@ -1164,7 +1177,7 @@ const activateFallbackCatalogue=()=>{
 };
 const loadComing = async () => {
   fillGenres(Object.entries(genreNames).map(([id,name])=>({id,name})));
-  if(token){
+  if(tmdbAvailable){
     activateFallbackCatalogue();
     if(apiNotice){
       const heading=apiNotice.querySelector('strong');
@@ -1198,7 +1211,7 @@ const mergeRadarMovies=movies=>{
   comingMovies=[...comingMovies,...fresh];
 };
 const applyRadarFilters=async ()=>{
-  if(token&&!usingFallbackCatalogue){
+  if(tmdbAvailable&&!usingFallbackCatalogue){
     const filters=getRadarFilters();
     radarVisibleCount=radarInitialCount;
     const firstPageLoaded=await loadComingPage(true);
@@ -1220,7 +1233,7 @@ anticipatedFilter?.addEventListener('change',applyRadarFilters);
 loadMoreButton?.addEventListener('click',async()=>{
   radarVisibleCount+=radarLoadMoreCount;
   let filtered=filterRadarMovies(comingMovies);
-  while(token&&!usingFallbackCatalogue&&filtered.length<radarVisibleCount&&comingPage<comingTotalPages&&!comingLoading){
+  while(tmdbAvailable&&!usingFallbackCatalogue&&filtered.length<radarVisibleCount&&comingPage<comingTotalPages&&!comingLoading){
     await loadComingPage(false,false);
     filtered=filterRadarMovies(comingMovies);
   }
@@ -1308,7 +1321,7 @@ if(journalDataNode)filterJournal();
 const trailerDialog=document.querySelector('[data-trailer-dialog]');
 const openTrailer=async movie=>{
   const content=trailerDialog.querySelector('[data-trailer-content]'); const message=trailerDialog.querySelector('[data-trailer-message]'); content.replaceChildren(); message.textContent='Finding the trailer…'; trailerDialog.showModal();
-  if(movie.id&&token){try{const data=await tmdb(`/movie/${movie.id}/videos`);const video=data.results.find(v=>v.site==='YouTube'&&v.type==='Trailer')||data.results.find(v=>v.site==='YouTube');if(video){const iframe=document.createElement('iframe');iframe.src=`https://www.youtube-nocookie.com/embed/${video.key}?autoplay=1`;iframe.title=`${movie.title} trailer`;iframe.allow='autoplay; encrypted-media; picture-in-picture';iframe.allowFullscreen=true;content.append(iframe);message.textContent='';return;}}catch{}}
+  if(movie.id&&tmdbAvailable){try{const data=await tmdb(`/movie/${movie.id}/videos`);const video=data.results.find(v=>v.site==='YouTube'&&v.type==='Trailer')||data.results.find(v=>v.site==='YouTube');if(video){const iframe=document.createElement('iframe');iframe.src=`https://www.youtube-nocookie.com/embed/${video.key}?autoplay=1`;iframe.title=`${movie.title} trailer`;iframe.allow='autoplay; encrypted-media; picture-in-picture';iframe.allowFullscreen=true;content.append(iframe);message.textContent='';return;}}catch{}}
   const link=document.createElement('a');link.className='button';link.href=`https://www.youtube.com/results?search_query=${encodeURIComponent(movie.trailerQuery)}`;link.target='_blank';link.rel='noopener';link.innerHTML='<span>Search trailer on YouTube</span><span aria-hidden="true">↗</span>';content.append(link);message.textContent='A direct trailer becomes available when TMDB is connected.';
 };
 const closeTrailer=()=>{trailerDialog.close();trailerDialog.querySelector('[data-trailer-content]').replaceChildren();};
@@ -2302,7 +2315,7 @@ const assistantDebug=(label,payload={})=>{
 };
 const assistantDataSourceLog=(source,payload={})=>{
   window.movieMatchActiveDataSource=source;
-  assistantDebug('data source',{source,tmdbTokenExists:Boolean(token),...payload});
+  assistantDebug('data source',{source,tmdbProxyAvailable:tmdbAvailable,...payload});
 };
 const selectedGenreId=answers=>answers.genre==='any'?0:Number(answers.genre||0);
 const debugGenreFilterResult=(movie,answers,context='genre filter')=>{
@@ -2660,8 +2673,8 @@ const assistantDiscoverStrategies=()=>{
   return strategies;
 };
 const fetchAssistantDiscoverPool=async ()=>{
-  if(!token)throw new Error('TMDB token not configured');
-  assistantDebug('TMDb token available',{available:Boolean(token)});
+  if(!tmdbAvailable)throw new Error('TMDB proxy not configured');
+  assistantDebug('TMDb proxy available',{available:tmdbAvailable});
   const strategies=assistantDiscoverStrategies();
   const requests=strategies.flatMap(strategy=>Array.from({length:strategy.pages},(_,index)=>({strategy:strategy.name,page:index+1,params:{...strategy.params,page:String(index+1)}})));
   const movies=[];
@@ -2686,7 +2699,7 @@ const assistantYearParams=answers=>{
 };
 const fetchAssistantExactGenrePool=async answers=>{
   const genreId=selectedGenreId(answers);
-  if(!token||!genreId)return [];
+  if(!tmdbAvailable||!genreId)return [];
   const today=new Date().toISOString().slice(0,10);
   const base={include_adult:'false','primary_release_date.lte':today,sort_by:'popularity.desc','vote_count.gte':'20',with_genres:String(genreId),...assistantYearParams(answers)};
   const requests=Array.from({length:8},(_,index)=>({...base,page:String(index+1)}));
@@ -2704,14 +2717,14 @@ const warmAssistantMovieCache=async ({force=false}={})=>{
   if(!force&&cached.length>=assistantCacheMinimum){assistantDataSourceLog('cache',{candidateCount:cached.length});return cached;}
   if(assistantCachePromise)return assistantCachePromise;
   assistantCachePromise=(async ()=>{
-    if(!token){
-      assistantDataSourceLog('static content package',{reason:'missing TMDb token'});
+    if(!tmdbAvailable){
+      assistantDataSourceLog('static content package',{reason:'TMDb proxy unavailable'});
       const staticMovies=await loadAssistantStaticPackage();
       if(staticMovies.length){setMovieCandidates(staticMovies);return staticMovies;}
-      assistantDataSourceLog('fallback',{reason:'missing TMDb token and static package unavailable'});
+      assistantDataSourceLog('fallback',{reason:'TMDb proxy and static package unavailable'});
       return setMovieCandidates(assistantFallback.map(movie=>normalizeAssistantCacheMovie(movie)));
     }
-    assistantDataSourceLog('TMDB',{status:'fetching',tmdbTokenExists:Boolean(token)});
+    assistantDataSourceLog('TMDB',{status:'fetching',tmdbProxyAvailable:tmdbAvailable});
     assistantDebug('cache fetch status',{status:'fetching',currentSize:cached.length,target:assistantCacheTarget});
     const fetched=await fetchAssistantDiscoverPool();
     const merged=mergeAssistantMovieSets(cached,fetched);
@@ -2881,7 +2894,7 @@ const mutateAssistantLibrary=async ({movie,status,rating=0,remove=false,onOptimi
 };
 const openMovieDetails=async movie=>{
   const normalized=normalizeMovie(movie);
-  if(normalized.id&&token&&!normalized.imdbId){
+  if(normalized.id&&tmdbAvailable&&!normalized.imdbId){
     try{
       const externalIds=await tmdb(`/movie/${normalized.id}/external_ids`);
       normalized.imdbId=externalIds.imdb_id||'';
@@ -3215,7 +3228,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
   }else if(cached.length>=5){
     immediateSource=cached;
     activeSource='cache';
-  }else if(token){
+  }else if(tmdbAvailable){
     immediateSource=[];
     activeSource='TMDB';
   }else{
@@ -3223,7 +3236,7 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
     activeSource='fallback';
     assistantReason.textContent='Live movie data is not available. TMDB configuration is missing.';
   }
-  assistantDataSourceLog(activeSource,{candidateCount:immediateSource.length,tmdbTokenExists:Boolean(token)});
+  assistantDataSourceLog(activeSource,{candidateCount:immediateSource.length,tmdbProxyAvailable:tmdbAvailable});
   let immediate;
   try{
     immediate=getAssistantMoviePool(immediateSource,answers,memory,{different});
@@ -3243,12 +3256,12 @@ const updateMovieWall=async ({scroll=false,different=false}={})=>{
       'No exact matches found. Try changing one filter.':
       (immediate.exactEnough?assistantExplanation(answers,immediate.pool.map(normalizeMovie)):closestAssistantExplanation(answers,immediate.pool.map(normalizeMovie)));
   }else if(!assistantWallHasMovieCards()){
-    assistantReason.textContent=immediate.strictCount===0?'No exact matches found. Try changing one filter.':(token?'Building the movie cache. Recommendations will appear here shortly.':'Live movie data is not available. TMDB configuration is missing.');
+    assistantReason.textContent=immediate.strictCount===0?'No exact matches found. Try changing one filter.':(tmdbAvailable?'Building the movie cache. Recommendations will appear here shortly.':'Live movie data is not available. TMDB configuration is missing.');
   }else{
     assistantReason.textContent='Updating recommendations…';
   }
   try{
-    const needsMoreCache=token&&(cached.length<assistantCacheMinimum||immediate.strictCount<5);
+    const needsMoreCache=tmdbAvailable&&(cached.length<assistantCacheMinimum||immediate.strictCount<5);
     if(!needsMoreCache){
       if(!assistantWallHasMovieCards())await recoverAssistantWallFromCandidates('no background fetch needed');
       return;
@@ -3425,7 +3438,7 @@ const isCommunityPlaceholderPoster=poster=>{
   return !value||value.startsWith('data:image/svg+xml')||value.includes('movie-poster-fallback.svg')||/\/images\/journal-[^/]+\.svg/.test(value);
 };
 const fetchCommunityMovieMatch=async title=>{
-  if(!token||!title)return null;
+  if(!tmdbAvailable||!title)return null;
   try{
     const data=await tmdb('/search/movie',{query:title,include_adult:'false',page:'1'});
     const results=Array.isArray(data.results)?data.results:[];
@@ -3534,7 +3547,7 @@ const renderCommunityMovieSuggestions=movies=>{
 const searchCommunityMovies=query=>{
   clearTimeout(communityMovieSearchTimer);
   communityMovieSearchTimer=setTimeout(async()=>{
-    if(!token||query.length<2){hideCommunityMovieSuggestions();return;}
+    if(!tmdbAvailable||query.length<2){hideCommunityMovieSuggestions();return;}
     communityMovieSearchController?.abort();
     communityMovieSearchController=new AbortController();
     try{
@@ -3542,7 +3555,7 @@ const searchCommunityMovies=query=>{
       url.searchParams.set('query',query);
       url.searchParams.set('include_adult','false');
       url.searchParams.set('page','1');
-      const response=await fetch(url,{signal:communityMovieSearchController.signal,headers:{Authorization:`Bearer ${token}`,accept:'application/json'}});
+      const response=await fetch(url,{signal:communityMovieSearchController.signal,headers:{apikey:supabaseAnonKey,accept:'application/json'}});
       if(!response.ok)throw new Error('Movie search failed');
       const data=await response.json();
       const movies=(Array.isArray(data.results)?data.results:[]).slice(0,6).map(normalizeCommunityMovieResult);
@@ -3620,7 +3633,7 @@ const applyCommunityPosterToCard=(reviewId,memory)=>{
   }
 };
 const upgradeSavedCommunityPosters=async()=>{
-  if(!token||!memoryWall)return;
+  if(!tmdbAvailable||!memoryWall)return;
   const memories=savedCommunityMemories();
   let changed=false;
   for(const memory of memories){
