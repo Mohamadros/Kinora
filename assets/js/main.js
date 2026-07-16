@@ -793,6 +793,14 @@ const updateUpcomingDebugPanel=()=>{
     'Load More hidden':loadMoreButton?.hidden??true,
     'Load More disabled':loadMoreButton?.disabled??true
   };
+  const activeFilters=getRadarFilters();
+  Object.assign(values,{
+    'Active search':activeFilters.query||'none',
+    'Active genre':activeFilters.genre||'all',
+    'Active release range':activeFilters.date||'all upcoming',
+    'Active buzz order':activeFilters.anticipated||'release date',
+    'First 10 rendered TMDB IDs':visibleUpcomingMovies.slice(0,10).map(movie=>movie.id||movie.tmdbId).join(', ')||'none'
+  });
   if(upcomingPerformance.startedAt){
     Object.assign(values,{
       'Performance: time to first cards (ms)':upcomingPerformance.firstCardsAt?Math.round(upcomingPerformance.firstCardsAt-upcomingPerformance.startedAt):'pending',
@@ -1370,13 +1378,14 @@ const mergeUpcomingCatalogue=(existing,incoming)=>{
   return merged;
 };
 const radarDiscoverParams=(filters=getRadarFilters(),page=1)=>{
-  const now=new Date();
   const range=radarDateRange(filters.date);
+  const sortBy=filters.anticipated==='high'?'popularity.desc':
+    'primary_release_date.asc';
   const params={
     'primary_release_date.gte':range.gte,
     region:'DE',
     with_release_type:'2|3|4',
-    sort_by:filters.anticipated?'popularity.desc':'primary_release_date.asc',
+    sort_by:sortBy,
     include_adult:'false',
     page:String(page)
   };
