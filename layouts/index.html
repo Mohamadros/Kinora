@@ -65,20 +65,23 @@
 <section id="coming-soon" class="section coming-section" style="--section-image:url('{{ "images/cinema-screen.png" | relURL }}')">
   <div class="section-shell">
     {{ partial "section-heading.html" $coming }}
-    <div class="movie-toolbar reveal">
+    <div id="upcoming-controls" class="movie-toolbar reveal">
       <label><span>Search movies</span><input type="search" data-movie-search placeholder="Search by title…" autocomplete="off"></label>
       <label><span>Filter by genre</span><select data-genre-filter><option value="">All genres</option></select></label>
       <label><span>Release date</span><select data-date-filter><option value="">All upcoming</option><option value="30">Next 30 days</option><option value="90">Next 3 months</option><option value="year">This year</option><option value="next-year">Next year</option></select></label>
       <label><span>Sort by buzz</span><select data-anticipated-filter><option value="">Release date order</option><option value="high">Most anticipated first</option><option value="medium">Medium-buzz discoveries first</option></select></label>
     </div>
     <aside class="api-notice" data-api-notice hidden><strong>Catalogue fallback</strong><span>Showing Kinora’s curated upcoming releases.</span></aside>
-    <div class="movie-status" data-coming-status role="status">Preparing the next attractions…</div>
+    <section id="upcoming-preferences" class="radar-lists" data-radar-lists aria-label="Upcoming Watchlist and Not Interested lists">
+      <section id="upcoming-watchlist" class="radar-list-group" aria-label="Upcoming Watchlist"></section>
+      <section id="upcoming-not-interested" class="radar-list-group" aria-label="Not Interested movies"></section>
+    </section>
+    <div id="upcoming-status" class="movie-status" data-coming-status role="status">Preparing the next attractions…</div>
     <section id="upcoming-catalogue" class="upcoming-catalogue" aria-label="Upcoming movie catalogue">
       <div id="upcoming-results" class="movie-grid movie-grid-large" data-coming-results></div>
       <div id="upcoming-empty-state" class="empty-state upcoming-empty-state" data-coming-empty hidden>No upcoming movies match the current filters and preferences. Change a filter or undo a Not Interested choice.</div>
-      <div id="upcoming-load-more-wrap" class="load-more-wrap" data-load-more-wrap hidden><button id="upcoming-load-more" class="button load-more" type="button" data-load-more hidden><span>Load more releases</span><span aria-hidden="true">＋</span></button></div>
     </section>
-    <section id="upcoming-preference-panels" class="radar-lists" data-radar-lists aria-label="Upcoming Watchlist and Not Interested lists"></section>
+    <div id="upcoming-load-more-container" class="load-more-wrap" data-load-more-wrap hidden><button id="upcoming-load-more" class="button load-more" type="button" data-load-more hidden><span>Load more releases</span><span aria-hidden="true">＋</span></button></div>
   </div>
 </section>
 

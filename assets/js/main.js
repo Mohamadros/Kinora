@@ -464,6 +464,8 @@ const normalizeMovie = movie => ({
   genre: movie.genre || movieGenreIds(movie).slice(0, 2).map(id => genreNames[id]).filter(Boolean).join(' · '),
   runtime: Number(movie.runtime||0),
   popularity: Number(movie.popularity||0),
+  voteCount: Number(movie.vote_count??movie.voteCount??0),
+  voteAverage: Number(movie.vote_average??movie.voteAverage??0),
   trailerQuery: movie.trailerQuery || `${movie.title} official trailer`
 });
 const normalizeCategorizedMovie=rawMovie=>{
@@ -842,8 +844,8 @@ const logUpcomingStructure=()=>{
   console.debug('[Upcoming Structure] containers',{
     resultsExists:Boolean(document.querySelector('#upcoming-results')),
     loadMoreExists:Boolean(document.querySelector('#upcoming-load-more')),
-    watchlistExists:Boolean(document.querySelector('#upcoming-preference-panels .radar-list-group:first-child')),
-    notInterestedExists:Boolean(document.querySelector('#upcoming-preference-panels .radar-list-group:nth-child(2)'))
+    watchlistExists:Boolean(document.querySelector('#upcoming-watchlist')),
+    notInterestedExists:Boolean(document.querySelector('#upcoming-not-interested'))
   });
 };
 
@@ -1023,6 +1025,7 @@ const renderRadarLists=()=>{
   const makeGroup=(title,items,type)=>{
     const group=document.createElement('section');
     group.className='radar-list-group taste-memory-group';
+    group.id=type==='hidden'?'upcoming-not-interested':'upcoming-watchlist';
     const heading=document.createElement('h3');
     heading.textContent=`${title} (${items.length})`;
     const list=document.createElement('ul');
@@ -1075,12 +1078,28 @@ const renderRadarLists=()=>{
   radarLists.append(makeGroup('Watchlist',watchlist,'watchlist'),makeGroup('Not interested',hidden,'hidden'));
   logUpcomingStructure();
 };
+const UPCOMING_BUZZ_THRESHOLDS={high:12,medium:4};
+const getAnticipationScore=movie=>{
+  const popularity=Number(movie?.popularity||0);
+  const voteCount=Number(movie?.vote_count??movie?.voteCount??0);
+  const voteAverage=Number(movie?.vote_average??movie?.voteAverage??0);
+  return popularity+Math.log10(voteCount+1)*2+voteAverage*.5;
+};
+const getUpcomingBuzzLevel=movie=>{
+  const explicit=String(movie?.buzz||'').toLowerCase();
+  if(!movie?.id&&['high','medium','low'].includes(explicit))return explicit;
+  const score=getAnticipationScore(movie);
+  if(score>=UPCOMING_BUZZ_THRESHOLDS.high)return'high';
+  if(score>=UPCOMING_BUZZ_THRESHOLDS.medium)return'medium';
+  return'low';
+};
 const normalizeRadarMovie=rawMovie=>{
   const movie=normalizeMovie(rawMovie);
   const releaseType=rawMovie.releaseType||rawMovie.release_type||'cinema';
   const platform=rawMovie.platform||rawMovie.platforms?.[0]||(releaseType==='streaming'?'Streaming':'Cinema release');
   const popularity=Number(rawMovie.popularity||0);
-  const buzz=rawMovie.buzz||(popularity>=10?'High':popularity>=3?'Medium':'Low');
+  const buzzLevel=getUpcomingBuzzLevel(rawMovie);
+  const buzz=buzzLevel.charAt(0).toUpperCase()+buzzLevel.slice(1);
   const trailerAvailable=Boolean(rawMovie.trailerAvailable||rawMovie.trailer_available);
   const tag=rawMovie.tag||(trailerAvailable?'Trailer out':buzz==='High'?'Highly anticipated':buzz==='Medium'?'No audience rating yet':'Limited information');
   return {
@@ -1093,10 +1112,11 @@ const normalizeRadarMovie=rawMovie=>{
     buzz,
     tag,
     why:rawMovie.why||`This ${movie.genre||'film'} is worth tracking because its release date, genre, and early visibility suggest audience interest.`,
-    popularity
+    popularity,
+    anticipationScore:getAnticipationScore(rawMovie),
+    buzzLevel
   };
 };
-const buzzRank=buzz=>({Low:1,Medium:2,High:3}[buzz]||1);
 const getRadarFilters=()=>({
   query:movieSearch?.value.trim().toLowerCase()||'',
   genre:genreFilter?.value||'',
@@ -1135,15 +1155,18 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
     return !filters.query||searchable.includes(filters.query);
   });
   const afterGenre=afterSearch.filter(movie=>!filters.genre||movie.genreIds.includes(Number(filters.genre)));
-  const afterWatchlist=afterGenre;
+  const afterBuzz=afterGenre.filter(movie=>{
+    if(filters.anticipated==='high')return getUpcomingBuzzLevel(movie)==='high';
+    if(filters.anticipated==='medium')return getUpcomingBuzzLevel(movie)==='medium';
+    return true;
+  });
+  const afterWatchlist=afterBuzz;
   const afterNotInterested=afterWatchlist.filter(movie=>!hidden.some(record=>radarRecordMatchesMovie(record,movie)));
   const afterReminderLogic=afterNotInterested;
   const sorted=[...afterReminderLogic].sort((a,b)=>{
-    if(filters.anticipated==='high')return Number(b.popularity||0)-Number(a.popularity||0)||a.releaseDate.localeCompare(b.releaseDate);
+    if(filters.anticipated==='high')return getAnticipationScore(b)-getAnticipationScore(a)||a.releaseDate.localeCompare(b.releaseDate);
     if(filters.anticipated==='medium'){
-      const aMedium=a.buzz==='Medium'?0:a.buzz==='High'?1:2;
-      const bMedium=b.buzz==='Medium'?0:b.buzz==='High'?1:2;
-      return aMedium-bMedium||Number(b.popularity||0)-Number(a.popularity||0)||a.releaseDate.localeCompare(b.releaseDate);
+      return getAnticipationScore(b)-getAnticipationScore(a)||a.releaseDate.localeCompare(b.releaseDate);
     }
     return a.releaseDate.localeCompare(b.releaseDate);
   });
@@ -1158,7 +1181,8 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
       'after release-date filter':afterDate.length,
       'after search filter':afterSearch.length,
       'after genre filter':afterGenre.length,
-      'after buzz sort (sorting only)':sorted.length,
+      'after buzz-mode eligibility':afterBuzz.length,
+      'after buzz sort':sorted.length,
       'after watchlist exclusion (not excluded)':afterWatchlist.length,
       'after Not Interested exclusion':afterNotInterested.length,
       'after reminder logic':afterReminderLogic.length,
@@ -1166,7 +1190,9 @@ const filterRadarMovies=(movies,filters=getRadarFilters())=>{
       'final eligible':sorted.length
     };
     upcomingDebugState.filterCounts=counts;
-    console.debug('[Upcoming Filter Pipeline]',{filters,counts,dateRejected});
+    const buzzCandidates=afterGenre.slice(0,20).map(movie=>({id:movie.id,title:movie.title,popularity:movie.popularity,voteCount:movie.voteCount,voteAverage:movie.voteAverage,anticipationScore:getAnticipationScore(movie),buzzLevel:getUpcomingBuzzLevel(movie),selectedMode:filters.anticipated||'release-date',included:afterBuzz.includes(movie),reason:afterBuzz.includes(movie)?'included':`excluded: ${getUpcomingBuzzLevel(movie)} is not ${filters.anticipated}`}));
+    console.debug('[Upcoming Filter Pipeline]',{filters,counts,dateRejected,buzzCandidates});
+    if(filters.anticipated==='high')sorted.forEach(movie=>{if(getUpcomingBuzzLevel(movie)!=='high')console.error('Invalid Medium/Low movie in Most Anticipated',movie);});
   }
   return sorted;
 };
