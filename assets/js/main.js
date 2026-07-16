@@ -669,8 +669,19 @@ let radarVisibleCount = 12;
 const radarInitialCount = 12;
 const radarLoadMoreCount = 8;
 const radarCreditsCache=new Map();
+let usingFallbackCatalogue=false;
 
-const fillGenres = genres => { genres.forEach(genre => { const option=document.createElement('option'); option.value=genre.id; option.textContent=genre.name; genreFilter?.append(option); }); };
+const fillGenres = genres => {
+  const existing=new Set([...genreFilter?.querySelectorAll('option')||[]].map(option=>String(option.value)));
+  genres.forEach(genre => {
+    if(existing.has(String(genre.id)))return;
+    const option=document.createElement('option');
+    option.value=genre.id;
+    option.textContent=genre.name;
+    genreFilter?.append(option);
+    existing.add(String(genre.id));
+  });
+};
 const authenticatedRadarStoreName=key=>key===radarHiddenKey?'hidden':'watchlist';
 const getRadarStore=key=>{
   if(currentUserId())return [...authenticatedRadarStores[authenticatedRadarStoreName(key)]];
@@ -1079,8 +1090,9 @@ const showComing = (movies, append=false) => {
   }
   const total=visibleMovies.length;
   const available=movies.length;
-  comingStatus.textContent=`Showing ${total} of ${available} ${available===1?'future film':'future films'} on the radar${comingTotalPages>comingPage?' — more available':''}.`;
-  if(loadMoreButton) loadMoreButton.hidden=total>=available&&(!token||comingPage>=comingTotalPages);
+  const catalogueLabel=usingFallbackCatalogue?(available===1?'curated upcoming film':'curated upcoming films'):(available===1?'future film':'future films');
+  comingStatus.textContent=`Showing ${total} of ${available} ${catalogueLabel} on the radar${!usingFallbackCatalogue&&comingTotalPages>comingPage?' — more available':''}.`;
+  if(loadMoreButton) loadMoreButton.hidden=total>=available&&(usingFallbackCatalogue||!token||comingPage>=comingTotalPages);
 };
 const radarApiMovie=movie=>({
   ...movie,
@@ -1107,7 +1119,7 @@ const radarDiscoverParams=(filters=getRadarFilters(),page=1)=>{
 };
 const loadComingPage = async (reset=false, render=true) => {
   if(comingLoading)return;
-  if(reset){comingPage=0;comingTotalPages=1;comingResults.replaceChildren();radarVisibleCount=radarInitialCount;}
+  if(reset){comingPage=0;comingTotalPages=1;radarVisibleCount=radarInitialCount;}
   if(comingPage>=comingTotalPages&&comingPage!==0)return;
   comingLoading=true;if(loadMoreButton)loadMoreButton.disabled=true;comingStatus.textContent='Loading future releases…';
   const nextPage=comingPage+1;const filters=getRadarFilters();
@@ -1127,22 +1139,53 @@ const loadComingPage = async (reset=false, render=true) => {
     const batch=(data.results||[]).map(radarApiMovie);
     comingMovies=reset?batch:[...comingMovies,...batch];
     if(render)showComing(filterRadarMovies(comingMovies));
-  }catch{comingStatus.textContent='The live movie catalogue could not be reached. Please check the TMDB token.';}
+    return true;
+  }catch(error){
+    console.warn('Upcoming TMDB request failed',error);
+    comingStatus.textContent='The live movie catalogue could not be reached.';
+    return false;
+  }
   finally{comingLoading=false;if(loadMoreButton)loadMoreButton.disabled=false;}
 };
+const activateFallbackCatalogue=()=>{
+  usingFallbackCatalogue=true;
+  if(apiNotice){
+    apiNotice.hidden=false;
+    const heading=apiNotice.querySelector('strong');
+    const copy=apiNotice.querySelector('span');
+    if(heading)heading.textContent=token?'Live catalogue unavailable':'Demo catalogue active';
+    if(copy)copy.textContent=token?'TMDB could not be reached. Showing Kinora’s curated upcoming releases instead.':'Add a TMDB Read Access Token in hugo.toml to load the live future-release catalogue.';
+  }
+  comingMovies=fallbackUpcoming;
+  comingPage=1;
+  comingTotalPages=1;
+  radarVisibleCount=radarInitialCount;
+  showComing(filterRadarMovies(comingMovies));
+};
 const loadComing = async () => {
+  fillGenres(Object.entries(genreNames).map(([id,name])=>({id,name})));
   if(token){
+    activateFallbackCatalogue();
+    if(apiNotice){
+      const heading=apiNotice.querySelector('strong');
+      const copy=apiNotice.querySelector('span');
+      if(heading)heading.textContent='Loading live catalogue';
+      if(copy)copy.textContent='Curated upcoming releases remain available while Kinora connects to TMDB.';
+    }
     try{
       const genres=await tmdb('/genre/movie/list');
       genreNames=Object.fromEntries(genres.genres.map(g=>[g.id,g.name]));
       fillGenres(genres.genres);
-      await loadComingPage(true);
+      usingFallbackCatalogue=false;
+      const firstPageLoaded=await loadComingPage(true);
+      if(!firstPageLoaded||!comingMovies.length)throw new Error('TMDB returned no upcoming movies.');
+      apiNotice.hidden=true;
       await loadComingPage(false);
       await loadComingPage(false);
       return;
-    }catch{}
+    }catch(error){console.warn('Upcoming catalogue switched to curated fallback',error);}
   }
-  apiNotice.hidden=false;comingMovies=fallbackUpcoming;fillGenres(Object.entries(genreNames).map(([id,name])=>({id,name})));comingPage=1;comingTotalPages=1;radarVisibleCount=radarInitialCount;showComing(filterRadarMovies(comingMovies));comingStatus.textContent=`Showing ${Math.min(radarVisibleCount,comingMovies.length)} of ${comingMovies.length} radar demonstration films. Connect TMDB for the complete live catalogue and official posters.`;
+  activateFallbackCatalogue();
 };
 const mergeRadarMovies=movies=>{
   const seen=new Set(comingMovies.map(movie=>movie.id||movie.title));
@@ -1155,10 +1198,11 @@ const mergeRadarMovies=movies=>{
   comingMovies=[...comingMovies,...fresh];
 };
 const applyRadarFilters=async ()=>{
-  if(token){
+  if(token&&!usingFallbackCatalogue){
     const filters=getRadarFilters();
     radarVisibleCount=radarInitialCount;
-    await loadComingPage(true);
+    const firstPageLoaded=await loadComingPage(true);
+    if(!firstPageLoaded){activateFallbackCatalogue();return;}
     await loadComingPage(false);
     await loadComingPage(false);
     if(filters.anticipated){
@@ -1176,7 +1220,7 @@ anticipatedFilter?.addEventListener('change',applyRadarFilters);
 loadMoreButton?.addEventListener('click',async()=>{
   radarVisibleCount+=radarLoadMoreCount;
   let filtered=filterRadarMovies(comingMovies);
-  while(token&&filtered.length<radarVisibleCount&&comingPage<comingTotalPages&&!comingLoading){
+  while(token&&!usingFallbackCatalogue&&filtered.length<radarVisibleCount&&comingPage<comingTotalPages&&!comingLoading){
     await loadComingPage(false,false);
     filtered=filterRadarMovies(comingMovies);
   }
