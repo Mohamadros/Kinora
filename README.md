@@ -16,14 +16,15 @@ Open <http://localhost:1313> and keep the terminal running.
 The site works immediately with curated fallback movies. To enable live mood recommendations, upcoming releases, online search, genres, posters, ratings, and trailers:
 
 1. Create a TMDB account and request an API Read Access Token.
-2. Open `hugo.toml`.
-3. Set `params.tmdbToken`:
+2. Log in to the Supabase CLI and link the Kinora project.
+3. Store the token as a Supabase Edge Function secret:
 
-```toml
-tmdbToken = "YOUR_TMDB_READ_ACCESS_TOKEN"
+```sh
+npx supabase@latest secrets set TMDB_READ_ACCESS_TOKEN="YOUR_TMDB_READ_ACCESS_TOKEN"
+npx supabase@latest functions deploy tmdb-catalogue --no-verify-jwt
 ```
 
-The token is used by browser JavaScript and is therefore visible to visitors. For a serious public deployment, move the API calls into a Netlify Function and store the token as an environment variable.
+The GitHub Pages frontend calls the public `tmdb-catalogue` Edge Function using the Supabase publishable key. The Edge Function adds the private TMDB bearer token on the server. Never add the TMDB token to `hugo.toml`, frontend JavaScript, or GitHub Pages output.
 
 ## Customize content
 

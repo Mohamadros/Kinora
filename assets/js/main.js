@@ -686,6 +686,9 @@ let allUpcomingMovies = [];
 let comingPage = 0;
 let comingTotalPages = 1;
 let comingLoading = false;
+let comingLoadingRevision = 0;
+let comingRequestRevision = 0;
+let comingRequestController = null;
 let radarVisibleCount = 12;
 const radarInitialCount = 12;
 const radarLoadMoreCount = 8;
@@ -694,6 +697,14 @@ let usingFallbackCatalogue=false;
 let filteredUpcomingMovies=[];
 let visibleUpcomingMovies=[];
 const upcomingStructureDebug=tmdbDebug||new URLSearchParams(window.location.search).has('debugUpcoming');
+
+const beginUpcomingRequest=()=>{
+  comingRequestRevision+=1;
+  comingRequestController?.abort();
+  comingRequestController=new AbortController();
+  return {revision:comingRequestRevision,signal:comingRequestController.signal};
+};
+const isCurrentUpcomingRequest=request=>Boolean(request)&&request.revision===comingRequestRevision&&!request.signal.aborted;
 
 const setUpcomingLoadMoreVisible=visible=>{
   if(loadMoreButton)loadMoreButton.hidden=!visible;
@@ -1159,35 +1170,40 @@ const radarDiscoverParams=(filters=getRadarFilters(),page=1)=>{
   if(filters.genre)params.with_genres=filters.genre;
   return params;
 };
-const loadComingPage = async (reset=false, render=true) => {
-  if(comingLoading)return;
+const loadComingPage = async (reset=false, render=true, request=beginUpcomingRequest()) => {
+  if(!isCurrentUpcomingRequest(request))return false;
+  if(comingLoading&&!reset)return false;
   if(reset){comingPage=0;comingTotalPages=1;radarVisibleCount=radarInitialCount;}
   if(comingPage>=comingTotalPages&&comingPage!==0)return;
-  comingLoading=true;if(loadMoreButton)loadMoreButton.disabled=true;comingStatus.textContent='Loading future releases…';
+  comingLoading=true;comingLoadingRevision=request.revision;if(loadMoreButton)loadMoreButton.disabled=true;comingStatus.textContent='Loading future releases…';
   const nextPage=comingPage+1;const filters=getRadarFilters();
   try{
     let data;
     if(filters.query.length>2){
-      data=await tmdb('/search/movie',{query:filters.query,include_adult:'false',region:'DE',page:String(nextPage)});
+      data=await tmdb('/search/movie',{query:filters.query,include_adult:'false',region:'DE',page:String(nextPage)},request.signal);
       const range=radarDateRange(filters.date);
       data.results=(data.results||[]).filter(movie=>{
         const releaseDate=movie.release_date||'';
         return (!releaseDate||releaseDate>=range.gte)&&(!range.lte||!releaseDate||releaseDate<=range.lte);
       });
     }else{
-      data=await tmdb('/discover/movie',radarDiscoverParams(filters,nextPage));
+      data=await tmdb('/discover/movie',radarDiscoverParams(filters,nextPage),request.signal);
     }
+    if(!isCurrentUpcomingRequest(request))return false;
     comingPage=nextPage;comingTotalPages=Math.min(Number(data.total_pages)||1,500);
     const batch=(data.results||[]).map(radarApiMovie);
     allUpcomingMovies=reset?batch:[...allUpcomingMovies,...batch];
     if(render)renderUpcomingResults(filterRadarMovies(allUpcomingMovies));
     return true;
   }catch(error){
+    if(error.name==='AbortError'||!isCurrentUpcomingRequest(request))return false;
     console.warn('Upcoming TMDB request failed',error);
     comingStatus.textContent='The live movie catalogue could not be reached.';
     return false;
   }
-  finally{comingLoading=false;if(loadMoreButton)loadMoreButton.disabled=false;}
+  finally{
+    if(comingLoadingRevision===request.revision){comingLoading=false;if(loadMoreButton)loadMoreButton.disabled=false;}
+  }
 };
 const activateFallbackCatalogue=()=>{
   usingFallbackCatalogue=true;
@@ -1208,6 +1224,7 @@ const loadComing = async () => {
   fillGenres(Object.entries(genreNames).map(([id,name])=>({id,name})));
   if(tmdbAvailable){
     activateFallbackCatalogue();
+    const request=beginUpcomingRequest();
     if(apiNotice){
       const heading=apiNotice.querySelector('strong');
       const copy=apiNotice.querySelector('span');
@@ -1215,17 +1232,21 @@ const loadComing = async () => {
       if(copy)copy.textContent='Curated upcoming releases remain available while Kinora connects to TMDB.';
     }
     try{
-      const genres=await tmdb('/genre/movie/list');
+      const genres=await tmdb('/genre/movie/list',{},request.signal);
+      if(!isCurrentUpcomingRequest(request))return;
       genreNames=Object.fromEntries(genres.genres.map(g=>[g.id,g.name]));
       fillGenres(genres.genres);
       usingFallbackCatalogue=false;
-      const firstPageLoaded=await loadComingPage(true);
+      const firstPageLoaded=await loadComingPage(true,true,request);
       if(!firstPageLoaded||!allUpcomingMovies.length)throw new Error('TMDB returned no upcoming movies.');
       apiNotice.hidden=true;
-      await loadComingPage(false);
-      await loadComingPage(false);
+      await loadComingPage(false,true,request);
+      await loadComingPage(false,true,request);
       return;
-    }catch(error){console.warn('Upcoming catalogue switched to curated fallback',error);}
+    }catch(error){
+      if(error.name==='AbortError'||!isCurrentUpcomingRequest(request))return;
+      console.warn('Upcoming catalogue switched to curated fallback',error);
+    }
   }
   activateFallbackCatalogue();
 };
@@ -1242,14 +1263,15 @@ const mergeRadarMovies=movies=>{
 const applyRadarFilters=async ()=>{
   if(tmdbAvailable&&!usingFallbackCatalogue){
     const filters=getRadarFilters();
+    const request=beginUpcomingRequest();
     radarVisibleCount=radarInitialCount;
-    const firstPageLoaded=await loadComingPage(true);
-    if(!firstPageLoaded){activateFallbackCatalogue();return;}
-    await loadComingPage(false);
-    await loadComingPage(false);
+    const firstPageLoaded=await loadComingPage(true,true,request);
+    if(!firstPageLoaded){if(isCurrentUpcomingRequest(request))activateFallbackCatalogue();return;}
+    await loadComingPage(false,true,request);
+    await loadComingPage(false,true,request);
     if(filters.anticipated){
-      await loadComingPage(false);
-      await loadComingPage(false);
+      await loadComingPage(false,true,request);
+      await loadComingPage(false,true,request);
     }
     return;
   }
@@ -1260,13 +1282,15 @@ genreFilter?.addEventListener('change',applyRadarFilters);
 dateFilter?.addEventListener('change',applyRadarFilters);
 anticipatedFilter?.addEventListener('change',applyRadarFilters);
 loadMoreButton?.addEventListener('click',async()=>{
+  const request=beginUpcomingRequest();
   radarVisibleCount+=radarLoadMoreCount;
   let filtered=filterRadarMovies(allUpcomingMovies);
   while(tmdbAvailable&&!usingFallbackCatalogue&&filtered.length<radarVisibleCount&&comingPage<comingTotalPages&&!comingLoading){
-    await loadComingPage(false,false);
+    const loaded=await loadComingPage(false,false,request);
+    if(!loaded||!isCurrentUpcomingRequest(request))break;
     filtered=filterRadarMovies(allUpcomingMovies);
   }
-  renderUpcomingResults(filtered);
+  if(isCurrentUpcomingRequest(request))renderUpcomingResults(filtered);
 });
 let searchTimer;
 movieSearch?.addEventListener('input', () => {
@@ -3485,6 +3509,8 @@ const fetchCommunityPoster=async title=>{
 };
 let communityMovieSearchTimer;
 let communityMovieSearchController;
+let communityMovieSearchRevision=0;
+let communitySuggestionIndex=-1;
 let selectedCommunityMovie=null;
 const clearCommunityMovieSelection=()=>{
   selectedCommunityMovie=null;
@@ -3500,6 +3526,7 @@ const clearCommunityMovieSelection=()=>{
   }
 };
 const hideCommunityMovieSuggestions=()=>{
+  communitySuggestionIndex=-1;
   if(communityMovieSuggestions){
     communityMovieSuggestions.hidden=true;
     communityMovieSuggestions.replaceChildren();
@@ -3550,12 +3577,14 @@ const renderCommunityMovieSuggestions=movies=>{
     communityMovieInput.setAttribute('aria-expanded','false');
     return;
   }
-  movies.forEach(movie=>{
+  movies.forEach((movie,index)=>{
     const option=document.createElement('button');
     option.type='button';
     option.className='movie-suggestion';
     option.setAttribute('role','option');
+    option.setAttribute('aria-selected','false');
     option.dataset.tmdbId=movie.tmdbId;
+    option.dataset.suggestionIndex=String(index);
     const image=document.createElement('img');
     image.src=movie.posterUrl;
     image.alt='';
@@ -3574,20 +3603,33 @@ const renderCommunityMovieSuggestions=movies=>{
   communityMovieSuggestions.hidden=false;
   communityMovieInput.setAttribute('aria-expanded','true');
 };
+const setCommunitySuggestionIndex=index=>{
+  const options=[...(communityMovieSuggestions?.querySelectorAll('.movie-suggestion')||[])];
+  if(!options.length){communitySuggestionIndex=-1;return;}
+  communitySuggestionIndex=(index+options.length)%options.length;
+  options.forEach((option,optionIndex)=>{
+    const active=optionIndex===communitySuggestionIndex;
+    option.classList.toggle('is-active',active);
+    option.setAttribute('aria-selected',String(active));
+  });
+  options[communitySuggestionIndex]?.scrollIntoView({block:'nearest'});
+};
 const searchCommunityMovies=query=>{
+  const revision=++communityMovieSearchRevision;
   clearTimeout(communityMovieSearchTimer);
+  communityMovieSearchController?.abort();
+  if(!tmdbAvailable||query.length<2){hideCommunityMovieSuggestions();return;}
   communityMovieSearchTimer=setTimeout(async()=>{
-    if(!tmdbAvailable||query.length<2){hideCommunityMovieSuggestions();return;}
-    communityMovieSearchController?.abort();
     communityMovieSearchController=new AbortController();
     if(communityFormMessage)communityFormMessage.textContent='Searching the movie catalogue…';
     try{
       const data=await tmdb('/search/movie',{query,include_adult:'false',page:'1'},communityMovieSearchController.signal);
+      if(revision!==communityMovieSearchRevision||communityMovieInput?.value.trim()!==query)return;
       const movies=(Array.isArray(data.results)?data.results:[]).slice(0,6).map(normalizeCommunityMovieResult);
       renderCommunityMovieSuggestions(movies);
       if(communityFormMessage)communityFormMessage.textContent=movies.length?'':'No matching movies found.';
     }catch(error){
-      if(error.name!=='AbortError'){
+      if(error.name!=='AbortError'&&revision===communityMovieSearchRevision){
         console.warn('Community TMDB movie search failed',error);
         hideCommunityMovieSuggestions();
         if(communityFormMessage)communityFormMessage.textContent='Movie search is temporarily unavailable. Please try again.';
@@ -3839,11 +3881,16 @@ communityMovieInput?.addEventListener('focus',()=>{
 });
 communityMovieInput?.addEventListener('keydown',event=>{
   if(event.key==='Escape')hideCommunityMovieSuggestions();
+  if((event.key==='ArrowDown'||event.key==='ArrowUp')&&communityMovieSuggestions&&!communityMovieSuggestions.hidden){
+    event.preventDefault();
+    setCommunitySuggestionIndex(communitySuggestionIndex+(event.key==='ArrowDown'?1:-1));
+  }
   if(event.key==='Enter'&&communityMovieSuggestions&&!communityMovieSuggestions.hidden){
-    const firstSuggestion=communityMovieSuggestions.querySelector('.movie-suggestion');
-    if(firstSuggestion){
+    const suggestions=[...communityMovieSuggestions.querySelectorAll('.movie-suggestion')];
+    const selectedSuggestion=suggestions[communitySuggestionIndex]||suggestions[0];
+    if(selectedSuggestion){
       event.preventDefault();
-      firstSuggestion.click();
+      selectedSuggestion.click();
     }
   }
 });
