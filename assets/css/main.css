@@ -118,9 +118,9 @@ html{scroll-behavior:auto!important}.hero{place-items:start!important;background
 .community-browser .memory-form,
 .community-browser .community-archive{
   overflow-y:auto;
-  overscroll-behavior:contain;
-  overscroll-behavior-y:contain;
+  overscroll-behavior-y:auto;
   scrollbar-gutter:stable;
   -webkit-overflow-scrolling:touch;
 }
 .community-browser .memory-form{max-height:560px}
+.community-browser .memory-wall{overscroll-behavior-y:auto}

@@ -4331,12 +4331,13 @@ communityArchive?.addEventListener('wheel',event=>{
   if(!direction)return;
   const canMove=direction>0?communityActiveIndex<communityCards.length-1:communityActiveIndex>0;
   if(!canMove)return;
+  event.preventDefault();
   if(communityAnimating)return;
   if(Math.sign(communityWheelDelta)&&Math.sign(communityWheelDelta)!==direction)communityWheelDelta=0;
   communityWheelDelta+=delta;
   communityWheelDelta=Math.max(-communityWheelThreshold,Math.min(communityWheelThreshold,communityWheelDelta));
   flushCommunityWheel();
-},{passive:true});
+},{passive:false});
 memoryWall?.addEventListener('click',async event=>{
   const deleteButton=event.target.closest('[data-delete-review]');
   if(deleteButton){
@@ -4401,17 +4402,16 @@ const syncCommunityWatchPlatform=()=>{
 };
 communityWatchPlatformSelect?.addEventListener('change',syncCommunityWatchPlatform);
 syncCommunityWatchPlatform();
-const containCommunityPanelWheelAtBoundary=panel=>{
-  panel?.addEventListener('wheel',event=>{
-    if(event.ctrlKey||Math.abs(event.deltaY)<=Math.abs(event.deltaX))return;
-    const tolerance=1;
-    const atTop=panel.scrollTop<=tolerance;
-    const atBottom=panel.scrollTop+panel.clientHeight>=panel.scrollHeight-tolerance;
-    if(event.deltaY<0&&atTop||event.deltaY>0&&atBottom)event.preventDefault();
-  },{passive:false});
-};
-containCommunityPanelWheelAtBoundary(communityForm);
-containCommunityPanelWheelAtBoundary(communityArchive);
+communityForm?.addEventListener('wheel',event=>{
+  if(event.ctrlKey||Math.abs(event.deltaY)<=Math.abs(event.deltaX))return;
+  const tolerance=1;
+  const atTop=communityForm.scrollTop<=tolerance;
+  const atBottom=communityForm.scrollTop+communityForm.clientHeight>=communityForm.scrollHeight-tolerance;
+  if(!(event.deltaY<0&&atTop||event.deltaY>0&&atBottom))return;
+  event.preventDefault();
+  const distance=event.deltaMode===1?event.deltaY*16:event.deltaMode===2?event.deltaY*innerHeight:event.deltaY;
+  window.scrollBy({top:distance,left:0,behavior:'auto'});
+},{passive:false});
 communityMovieInput?.addEventListener('input',()=>{
   const query=communityMovieInput.value.trim();
   if(selectedCommunityMovie&&query!==selectedCommunityMovie.displayTitle&&query!==selectedCommunityMovie.title)clearCommunityMovieSelection();
