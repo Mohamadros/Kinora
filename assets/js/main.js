@@ -4401,6 +4401,13 @@ const syncCommunityWatchPlatform=()=>{
 };
 communityWatchPlatformSelect?.addEventListener('change',syncCommunityWatchPlatform);
 syncCommunityWatchPlatform();
+communityForm?.addEventListener('wheel',event=>{
+  if(event.ctrlKey||Math.abs(event.deltaY)<=Math.abs(event.deltaX))return;
+  event.preventDefault();
+  const distance=event.deltaMode===1?event.deltaY*16:event.deltaMode===2?event.deltaY*innerHeight:event.deltaY;
+  communityForm.scrollTop+=distance;
+  window.scrollBy({top:distance,left:0,behavior:'auto'});
+},{passive:false});
 communityMovieInput?.addEventListener('input',()=>{
   const query=communityMovieInput.value.trim();
   if(selectedCommunityMovie&&query!==selectedCommunityMovie.displayTitle&&query!==selectedCommunityMovie.title)clearCommunityMovieSelection();

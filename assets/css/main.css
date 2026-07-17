@@ -113,6 +113,3 @@ html{scroll-behavior:auto!important}.hero{place-items:start!important;background
 /* Keep the two preference panels aligned even when one list is empty. */
 .coming-section .radar-lists{align-items:stretch}
 .coming-section .radar-list-group{align-self:stretch;height:100%}
-
-/* Keep scrolling inside the review form from moving the page at its edges. */
-.community-browser .memory-form{overscroll-behavior-y:contain}
