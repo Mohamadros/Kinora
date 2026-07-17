@@ -113,3 +113,14 @@ html{scroll-behavior:auto!important}.hero{place-items:start!important;background
 /* Keep the two preference panels aligned even when one list is empty. */
 .coming-section .radar-lists{align-items:stretch}
 .coming-section .radar-list-group{align-self:stretch;height:100%}
+
+/* Contain wheel, trackpad, and touch scrolling inside the Community panels. */
+.community-browser .memory-form,
+.community-browser .community-archive{
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  overscroll-behavior-y:contain;
+  scrollbar-gutter:stable;
+  -webkit-overflow-scrolling:touch;
+}
+.community-browser .memory-form{max-height:560px}
